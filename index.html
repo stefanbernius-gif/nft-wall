@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFT Wall</title>
+<meta name="description" content="A museum wall for NFTs on Ethereum, Arbitrum and Optimism. No login.">
+<style>
+  :root{
+    --wall:#ebe7df; --ink:#2b2824; --ink-soft:#6f685e; --line:rgba(0,0,0,.12);
+    --frame:#1e1b18; --mat:#fbfaf7; --label:#fffdf8; --accent:#9a7b4f;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  body[data-wall=dark]{--wall:#2a2826;--ink:#efe9df;--ink-soft:#b3aa9c;--line:rgba(255,255,255,.14)}
+  body[data-wall=green]{--wall:#2e3a32;--ink:#eee8dc;--ink-soft:#b9b39f;--line:rgba(255,255,255,.14)}
+  body[data-wall=oxblood]{--wall:#4d2523;--ink:#f3e9df;--ink-soft:#d1b7a8;--line:rgba(255,255,255,.14)}
+  body[data-wall=blue]{--wall:#26323f;--ink:#ecebe6;--ink-soft:#aeb6bf;--line:rgba(255,255,255,.14)}
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--wall);color:var(--ink);font-family:var(--sans);min-height:100vh;transition:background .4s,color .4s;
+    background-image:radial-gradient(120% 60% at 50% 0%,rgba(255,255,255,.10),transparent 60%)}
+  button{font:inherit;color:inherit;cursor:pointer}
+  /* header */
+  header{max-width:1400px;margin:0 auto;padding:40px 24px 8px;display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-end;justify-content:space-between}
+  .titlebox h1{font-family:var(--serif);font-weight:400;font-size:clamp(28px,4vw,44px);letter-spacing:.01em;margin:0;outline:none;border-bottom:1px dashed transparent}
+  body.arrange .titlebox h1{border-bottom-color:var(--line)}
+  .titlebox p{margin:6px 0 0;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+  .tools{display:flex;flex-wrap:wrap;gap:8px}
+  .tools button,.tools select{background:transparent;border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;color:var(--ink)}
+  .tools button:hover{border-color:var(--ink-soft)}
+  .tools button.on{background:var(--ink);color:var(--wall);border-color:var(--ink)}
+  .tools select{appearance:none;padding-right:14px}
+  .tools select option{color:#222}
+  .hint{max-width:1400px;margin:0 auto;padding:0 24px;font-size:13px;color:var(--ink-soft);min-height:20px}
+  /* wall */
+  #wall{max-width:1400px;margin:0 auto;padding:48px 24px 120px;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:88px 72px}
+  .piece{position:relative;display:flex;flex-direction:column;align-items:center;user-select:none;-webkit-user-select:none}
+  .piece::before{content:"";position:absolute;left:50%;top:-70px;width:150%;height:160px;transform:translateX(-50%);
+    background:radial-gradient(50% 60% at 50% 0%,rgba(255,244,220,.28),transparent 70%);pointer-events:none}
+  .frame{position:relative;background:var(--frame);padding:12px;box-shadow:0 2px 0 rgba(255,255,255,.08) inset,0 18px 30px -12px rgba(0,0,0,.55),0 4px 8px rgba(0,0,0,.25);cursor:zoom-in}
+  .mat{background:var(--mat);padding:28px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),inset 0 3px 8px rgba(0,0,0,.12)}
+  .art{width:220px;height:220px;display:flex;align-items:center;justify-content:center;background:#f1efe9;overflow:hidden}
+  .art img,.art video{-webkit-user-drag:none;max-width:100%;max-height:100%;display:block;object-fit:contain}
+  .art .ph{font-family:var(--serif);font-size:13px;color:#8b8478;text-align:center;padding:16px;font-style:italic}
+  .piece.fav .art{width:320px;height:320px}
+  .piece.fav .frame{padding:16px;background:linear-gradient(135deg,#3a2f22,#1f1912 45%,#3b2f20)}
+  .placard{margin-top:22px;background:var(--label);color:#2b2824;padding:10px 14px 11px;min-width:170px;max-width:260px;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+  .placard .t{font-family:var(--serif);font-size:15px;line-height:1.25;overflow-wrap:anywhere}
+  .placard .c{font-family:var(--serif);font-style:italic;font-size:13px;color:#6f685e;margin-top:2px;overflow-wrap:anywhere}
+  .placard .m{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#8b8478;margin-top:6px}
+  .ctl{position:absolute;top:-14px;right:-14px;display:none;gap:6px;z-index:3}
+  body.arrange .ctl{display:flex}
+  .ctl button{width:32px;height:32px;border-radius:50%;border:0;background:#fffdf8;color:#2b2824;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:15px;line-height:1}
+  .ctl button.star.on{background:var(--accent);color:#fff}
+  body.arrange .piece{cursor:grab;touch-action:none}
+  body.arrange .frame{cursor:grab}
+  .piece.hidden-piece{opacity:.35}
+  body:not(.show-hidden) .piece.noimg{display:none}   /* no working image anywhere: keep the wall clean */
+  .piece.noimg{opacity:.5}
+  .piece.dragging{opacity:.2}
+  .ghost{position:fixed;z-index:50;pointer-events:none;transform:rotate(-1.5deg) scale(1.03);opacity:.95}
+  /* empty + loading */
+  .empty{max-width:560px;margin:60px auto;padding:0 24px;text-align:center}
+  .empty h2{font-family:var(--serif);font-weight:400;font-size:28px;margin:0 0 10px}
+  .empty p{color:var(--ink-soft);line-height:1.6}
+  textarea{width:100%;min-height:120px;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.7);color:#222;resize:vertical}
+  .btn{display:inline-block;margin-top:12px;background:var(--ink);color:var(--wall);border:0;border-radius:999px;padding:11px 22px;font-size:14px}
+  .chains{display:flex;gap:14px;justify-content:center;margin-top:12px;font-size:13px;color:var(--ink-soft)}
+  .status{max-width:1400px;margin:0 auto;padding:0 24px;font-size:12px;color:var(--ink-soft)}
+  /* dialogs */
+  dialog{border:0;padding:0;background:transparent;max-width:min(1100px,94vw);max-height:94vh}
+  dialog::backdrop{background:rgba(12,10,8,.86)}
+  .lb{display:flex;flex-wrap:wrap;gap:28px;align-items:center;justify-content:center;color:#efe9df}
+  .lb .big{max-width:min(720px,92vw);max-height:78vh;display:flex;align-items:center;justify-content:center;background:var(--mat);padding:22px;box-shadow:0 0 0 12px var(--frame),0 30px 60px rgba(0,0,0,.6)}
+  .lb .big img,.lb .big video{max-width:100%;max-height:calc(78vh - 44px);object-fit:contain}
+  .lb .info{max-width:340px;font-size:14px;line-height:1.55}
+  .lb .info h3{font-family:var(--serif);font-weight:400;font-size:24px;margin:0 0 4px}
+  .lb .info .c{font-family:var(--serif);font-style:italic;color:#c9bfae}
+  .lb .info .d{color:#cfc6b8;max-height:30vh;overflow:auto;margin:12px 0;white-space:pre-line}
+  .lb .info a{color:#e8cf9f}
+  .lb .info dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px;color:#b8ae9f;margin:12px 0}
+  .lb .info dd{margin:0;overflow-wrap:anywhere;color:#e2dacd}
+  .x{position:fixed;top:14px;right:18px;background:none;border:0;color:#fff;font-size:34px;line-height:1}
+  .panel{background:#fffdf8;color:#2b2824;border-radius:12px;padding:24px;width:min(560px,92vw)}
+  .panel h3{font-family:var(--serif);font-weight:400;font-size:22px;margin:0 0 8px}
+  .panel p{font-size:13px;color:#6f685e;margin:0 0 12px;line-height:1.5}
+  .panel .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  .panel .row button{border:1px solid #d8d2c6;background:#fff;border-radius:999px;padding:9px 18px}
+  .panel .row button.pri{background:#2b2824;color:#fff;border-color:#2b2824}
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#2b2824;color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:translateX(-50%)}
+  @media (max-width:640px){
+    header{padding:28px 16px 4px}.hint,.status{padding:0 16px}
+    #wall{padding:36px 16px 100px;gap:64px 28px}
+    .art{width:150px;height:150px}.mat{padding:16px}.frame{padding:9px}
+    .piece.fav .art{width:240px;height:240px}
+    .placard{max-width:190px;min-width:0}
+  }
+</style>
+</head>
+<body data-wall="light">
+<header>
+  <div class="titlebox">
+    <h1 id="title" spellcheck="false">My NFT Collection</h1>
+    <p id="sub">Ethereum · Arbitrum · Optimism</p>
+  </div>
+  <div class="tools" id="tools" hidden>
+    <button id="bArrange" title="Drag to reorder, star favorites, hide pieces">Arrange</button>
+    <button id="bHidden" title="Show hidden pieces">Show hidden</button>
+    <select id="sWall" aria-label="Wall color">
+      <option value="light">Gallery white</option><option value="dark">Charcoal</option>
+      <option value="green">Museum green</option><option value="oxblood">Oxblood</option><option value="blue">Slate blue</option>
+    </select>
+    <button id="bAddr">Addresses</button>
+    <button id="bShare">Copy share link</button>
+  </div>
+</header>
+<div class="hint" id="hint"></div>
+<div class="status" id="status"></div>
+<main id="wall"></main>
+
+<dialog id="dLb"><button class="x" data-close aria-label="Close">&times;</button><div class="lb" id="lb"></div></dialog>
+<dialog id="dAddr"><div class="panel">
+  <h3>Wallet addresses</h3>
+  <p>One per line. 0x addresses or ENS names (name.eth). Public addresses only. Never paste a seed phrase or private key.</p>
+  <textarea id="taAddr" spellcheck="false" placeholder="0x1234…&#10;name.eth"></textarea>
+  <div class="row"><button data-close>Cancel</button><button class="pri" id="bAddrSave">Load wall</button></div>
+</div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+"use strict";
+/* ---------- config ---------- */
+var CHAINS = {
+  e: { name: "Ethereum", api: "https://eth.blockscout.com", explorer: "https://eth.blockscout.com" },
+  a: { name: "Arbitrum", api: "https://arbitrum.blockscout.com", explorer: "https://arbitrum.blockscout.com" },
+  o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io" }
+};
+// Tested 2026-10-17 from a browser: Filebase serves reliably; dweb.link/w3s.link answer 403, pinata 429, ipfs.io often unreachable. Order = best first.
+var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://4everland.io/ipfs/"];
+var MAX_PAGES = 40, LS = "nftwall_state_v1";
+
+/* ---------- state ---------- */
+var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [] };
+var NFT = {};          // key -> item
+var arrange = false, showHidden = false;
+var $ = function (id) { return document.getElementById(id); };
+var wall = $("wall");
+
+/* share link = state, deflated + base64url in the URL hash. No server. */
+function b64u(bytes) { var s = ""; bytes.forEach(function (b) { s += String.fromCharCode(b); }); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+function unb64u(str) { str = str.replace(/-/g, "+").replace(/_/g, "/"); while (str.length % 4) str += "="; var s = atob(str), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+async function pack(obj) {
+  var data = new TextEncoder().encode(JSON.stringify(obj));
+  if (!window.CompressionStream) return "j" + b64u(data);
+  var buf = await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer();
+  return "z" + b64u(new Uint8Array(buf));
+}
+async function unpack(str) {
+  var kind = str[0], bytes = unb64u(str.slice(1));
+  if (kind === "z") bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+var saveTimer;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async function () {
+    try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
+    try { history.replaceState(null, "", "#s=" + await pack(S)); } catch (e) {}
+  }, 250);
+}
+async function loadState() {
+  var m = location.hash.match(/#s=([\w-]+)/);
+  if (m) { try { Object.assign(S, await unpack(m[1])); return; } catch (e) { toast("This share link is damaged."); } }
+  try { var raw = localStorage.getItem(LS); if (raw) Object.assign(S, JSON.parse(raw)); } catch (e) {}
+}
+
+/* ---------- media URLs ---------- */
+function ipfsPath(u) {
+  if (!u) return null;
+  if (u.indexOf("ipfs://") === 0) return u.slice(7).replace(/^ipfs\//, "");
+  var m = u.match(/\/ipfs\/(.+)$/); return m ? m[1] : null;
+}
+function candidates(u) {
+  if (!u || typeof u !== "string") return [];
+  u = u.trim();
+  if (u.indexOf("data:") === 0) return [u];
+  if (u.indexOf("ar://") === 0) return ["https://arweave.net/" + u.slice(5)];
+  var p = ipfsPath(u), out = [];
+  if (p) GATEWAYS.forEach(function (g) { out.push(g + p); });          // IPFS: our gateway order first, the original host last
+  if (u.indexOf("http") === 0) out.push(u.replace(/^http:\/\//, "https://"));
+  if (!out.length && /^(Qm[1-9A-Za-z]{44}|baf[a-z0-9]{50,})/.test(u)) GATEWAYS.forEach(function (g) { out.push(g + u); });
+  return out.filter(function (x, i) { return out.indexOf(x) === i; });
+}
+var VIDEO = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+function mediaFor(it, big) {
+  var md = it.metadata || {}, th = it.thumbnails || {};
+  var imgs = [];
+  if (!big && th["500x500"]) imgs.push(th["500x500"]);
+  if (big && th.original) imgs.push(th.original);
+  imgs = imgs.concat(candidates(it.image_url), candidates(md.image), candidates(md.image_url), candidates(md.image_data && ("data:image/svg+xml;utf8," + encodeURIComponent(md.image_data))));
+  var vids = candidates(it.animation_url).concat(candidates(md.animation_url)).filter(function (u) { return VIDEO.test(u) || u.indexOf("data:video") === 0; });
+  if (it.media_type === "video" && it.media_url) vids.unshift(it.media_url);
+  imgs = imgs.filter(function (u) { return !VIDEO.test(u); });
+  return { imgs: imgs.filter(function (x, i) { return imgs.indexOf(x) === i; }), vids: vids };
+}
+function mountMedia(box, it, big) {
+  var m = mediaFor(it, big);
+  box.innerHTML = "";
+  if (!m.imgs.length && m.vids.length) {
+    var v = document.createElement("video"); v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true; v.src = m.vids[0];
+    box.appendChild(v); return;
+  }
+  if (!m.imgs.length) { missing(box); return; }
+  var img = new Image(), i = 0;
+  img.alt = title(it); img.decoding = "async"; img.draggable = false; if (!big) img.loading = "lazy";
+  img.referrerPolicy = "no-referrer";
+  var timer, wait = big ? 20000 : 8000;
+  function next() { clearTimeout(timer); i++; if (i < m.imgs.length) go(); else missing(box); }
+  function go() { img.src = m.imgs[i]; if (img.loading !== "lazy" || box.dataset.seen) timer = setTimeout(next, wait); }   // a hanging gateway counts as failed
+  img.onerror = next; img.onload = function () { clearTimeout(timer); };
+  if (!big) new IntersectionObserver(function (en, ob) { if (en[0].isIntersecting) { box.dataset.seen = 1; ob.disconnect(); if (!img.complete) timer = setTimeout(next, wait); } }, { rootMargin: "300px" }).observe(box);
+  go();
+  box.appendChild(img);
+}
+function missing(box) {
+  box.innerHTML = '<div class="ph">Image not available</div>';
+  var p = box.closest(".piece"); if (p && !p.classList.contains("noimg")) { p.classList.add("noimg"); counts(); }
+}
+function title(it) { var md = it.metadata || {}; return md.name || ((it.token.name || "Untitled") + " #" + short(it.id)); }
+function short(id) { id = String(id); return id.length > 12 ? id.slice(0, 6) + "…" + id.slice(-4) : id; }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+/* ---------- data ---------- */
+async function getJSON(url, tries) {
+  tries = tries || 3;
+  for (var k = 0; k < tries; k++) {
+    try { var r = await fetch(url); if (r.status === 429) { await sleep(1500 * (k + 1)); continue; } if (!r.ok) throw new Error(r.status); return await r.json(); }
+    catch (e) { if (k === tries - 1) throw e; await sleep(800 * (k + 1)); }
+  }
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function resolveAddr(a) {
+  a = a.trim(); if (/^0x[0-9a-fA-F]{40}$/.test(a)) return a;
+  if (!/\./.test(a)) return null;
+  var d = await getJSON(CHAINS.e.api + "/api/v2/search?q=" + encodeURIComponent(a));
+  var hit = (d.items || []).find(function (i) { return i.type === "ens_domain" && (i.ens_info ? i.ens_info.name : i.name || "").toLowerCase() === a.toLowerCase(); });
+  return hit ? (hit.address_hash || hit.address) : null;
+}
+async function fetchChain(addr, c, onPage) {
+  var base = CHAINS[c].api + "/api/v2/addresses/" + addr + "/nft?type=ERC-721,ERC-1155,ERC-404";
+  var next = null, n = 0;
+  do {
+    var url = base + (next ? "&" + new URLSearchParams(next).toString() : "");
+    var d = await getJSON(url);
+    (d.items || []).forEach(function (it) {
+      if (!it.token) return;
+      var key = c + ":" + String(it.token.address_hash || it.token.address).toLowerCase() + ":" + it.id;
+      it.chain = c; it.key = key; it.holder = addr;
+      NFT[key] = it;
+    });
+    onPage(); next = d.next_page_params; n++;
+  } while (next && n < MAX_PAGES);
+}
+var loadRun = 0;
+async function loadAll() {
+  var run = ++loadRun; NFT = {}; render();
+  if (!S.a.length) return;
+  var addrs = [];
+  for (var i = 0; i < S.a.length; i++) {
+    try { var r = await resolveAddr(S.a[i]); if (r) addrs.push(r); else toast("Not found: " + S.a[i]); } catch (e) { toast("Could not look up " + S.a[i]); }
+  }
+  var jobs = [], done = 0, failed = [];
+  addrs.forEach(function (a) { Object.keys(CHAINS).forEach(function (c) { jobs.push({ a: a, c: c }); }); });
+  setStatus("Loading " + jobs.length + " wallet × chain lookups…");
+  var t; var tick = function () { clearTimeout(t); t = setTimeout(function () { if (run === loadRun) render(); }, 200); };
+  await Promise.all(jobs.map(function (j) {
+    return fetchChain(j.a, j.c, tick).catch(function () { failed.push(CHAINS[j.c].name + " " + j.a.slice(0, 6) + "…"); })
+      .then(function () { done++; if (run === loadRun) setStatus(done < jobs.length ? "Loading… " + done + "/" + jobs.length : ""); });
+  }));
+  if (run !== loadRun) return;
+  // tokens the explorer flags as scam/spam start hidden (only the first time they appear)
+  Object.values(NFT).forEach(function (it) {
+    var rep = it.token.reputation;
+    if (rep && rep !== "ok" && S.o.indexOf(it.key) < 0 && S.h.indexOf(it.key) < 0) S.h.push(it.key);
+  });
+  save(); render();
+  setStatus(failed.length ? "Could not load: " + failed.join(", ") + ". Reload to retry." : "");
+}
+function ordered() {
+  var keys = Object.keys(NFT), known = S.o.filter(function (k) { return NFT[k]; });
+  var fresh = keys.filter(function (k) { return S.o.indexOf(k) < 0; }).sort(function (x, y) {
+    var a = NFT[x], b = NFT[y];
+    return (a.chain + (a.token.name || "")).localeCompare(b.chain + (b.token.name || "")) || String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+  });
+  return known.concat(fresh);
+}
+
+/* ---------- render ---------- */
+function setStatus(s) { $("status").textContent = s; }
+function render() {
+  document.body.dataset.wall = S.w; $("sWall").value = S.w;
+  $("title").textContent = S.t || "My NFT Collection"; document.title = (S.t || "NFT Wall");
+  $("tools").hidden = !S.a.length;
+  if (!S.a.length) return renderEmpty();
+  var keys = ordered(), shown = keys.filter(function (k) { return showHidden || S.h.indexOf(k) < 0; });
+  $("hint").textContent = arrange ? "Drag a frame to move it. ★ makes it a featured piece. ⦸ hides it. Changes save into the share link." : "";
+  var have = {};
+  Array.prototype.forEach.call(wall.children, function (el) { if (el.dataset.key) have[el.dataset.key] = el; });
+  wall.querySelectorAll(".empty").forEach(function (e) { e.remove(); });
+  shown.forEach(function (k, i) {
+    var el = have[k] || piece(NFT[k]); delete have[k];
+    el.classList.toggle("fav", S.f.indexOf(k) >= 0);
+    el.classList.toggle("hidden-piece", S.h.indexOf(k) >= 0);
+    el.querySelector(".star").classList.toggle("on", S.f.indexOf(k) >= 0);
+    if (wall.children[i] !== el) wall.insertBefore(el, wall.children[i] || null);
+  });
+  Object.values(have).forEach(function (el) { el.remove(); });
+  counts();
+  if (!shown.length && !$("status").textContent) wall.innerHTML = '<div class="empty"><h2>Nothing on the wall yet</h2><p>No NFTs found on these addresses, or all are hidden.</p></div>';
+}
+function counts() {
+  var keys = ordered(), hidden = keys.filter(function (k) { return S.h.indexOf(k) >= 0; }).length;
+  var noimg = wall.querySelectorAll(".piece.noimg:not(.hidden-piece)").length;
+  var extra = [hidden ? hidden + " hidden" : "", noimg ? noimg + " without image" : ""].filter(Boolean).join(" · ");
+  $("sub").textContent = (keys.length - hidden - noimg) + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
+  $("bHidden").hidden = !hidden && !noimg && !showHidden;
+}
+function chainSummary(keys) {
+  var n = { e: 0, a: 0, o: 0 }; keys.forEach(function (k) { if (S.h.indexOf(k) < 0) n[k[0]]++; });
+  return Object.keys(n).filter(function (c) { return n[c]; }).map(function (c) { return CHAINS[c].name + " " + n[c]; }).join(" · ") || "Ethereum · Arbitrum · Optimism";
+}
+function piece(it) {
+  var el = document.createElement("figure"); el.className = "piece"; el.dataset.key = it.key; el.style.margin = "0";
+  el.innerHTML = '<div class="ctl"><button class="star" title="Feature this piece" aria-label="Feature">★</button><button class="hide" title="Hide or show" aria-label="Hide">⦸</button></div>' +
+    '<div class="frame"><div class="mat"><div class="art"></div></div></div>' +
+    '<figcaption class="placard"><div class="t">' + esc(title(it)) + '</div><div class="c">' + esc(it.token.name || "Unknown collection") + '</div>' +
+    '<div class="m">' + CHAINS[it.chain].name + (it.value && it.value !== "1" ? " · ×" + esc(it.value) : "") + '</div></figcaption>';
+  mountMedia(el.querySelector(".art"), it, false);
+  el.querySelector(".star").onclick = function (e) { e.stopPropagation(); toggle(S.f, it.key); render(); save(); };
+  el.querySelector(".hide").onclick = function (e) { e.stopPropagation(); toggle(S.h, it.key); render(); save(); };
+  el.querySelector(".frame").addEventListener("click", function () { if (!arrange && !dragMoved) openLb(it); });
+  return el;
+}
+function toggle(arr, k) { var i = arr.indexOf(k); if (i >= 0) arr.splice(i, 1); else arr.push(k); }
+function renderEmpty() {
+  $("sub").textContent = "Ethereum · Arbitrum · Optimism"; $("hint").textContent = ""; setStatus("");
+  wall.innerHTML = '<div class="empty"><h2>Hang your NFTs on a wall</h2>' +
+    '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum and Optimism. No login, nothing to install.</p>' +
+    '<textarea id="taFirst" spellcheck="false" placeholder="0x1234…&#10;name.eth"></textarea>' +
+    '<button class="btn" id="bFirst">Hang my collection</button>' +
+    '<div class="chains"><span>Ethereum</span><span>Arbitrum</span><span>Optimism</span></div></div>';
+  $("bFirst").onclick = function () { setAddrs($("taFirst").value); };
+}
+function setAddrs(text) {
+  var list = text.split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  list = list.filter(function (x, i) { return list.map(function (y) { return y.toLowerCase(); }).indexOf(x.toLowerCase()) === i; });
+  if (!list.length) return toast("Paste at least one address.");
+  S.a = list; save(); wall.innerHTML = ""; loadAll();
+}
+
+/* ---------- lightbox ---------- */
+function openLb(it) {
+  var md = it.metadata || {}, c = CHAINS[it.chain], ca = it.token.address_hash || it.token.address;
+  $("lb").innerHTML = '<div class="big"></div><div class="info"><h3>' + esc(title(it)) + '</h3><div class="c">' + esc(it.token.name || "") + '</div>' +
+    (md.description ? '<div class="d">' + esc(md.description) + '</div>' : "") +
+    '<dl><dt>Chain</dt><dd>' + c.name + '</dd><dt>Token ID</dt><dd>' + esc(it.id) + '</dd><dt>Standard</dt><dd>' + esc(it.token_type || it.token.type) + '</dd>' +
+    '<dt>Contract</dt><dd>' + esc(ca) + '</dd></dl>' +
+    '<a href="' + c.explorer + '/token/' + ca + '/instance/' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener">View on ' + c.name + ' explorer ↗</a></div>';
+  mountMedia($("lb").querySelector(".big"), it, true);
+  $("dLb").showModal();
+}
+document.querySelectorAll("dialog").forEach(function (d) {
+  d.addEventListener("click", function (e) { if (e.target === d || e.target.hasAttribute("data-close")) d.close(); });
+});
+
+/* ---------- drag to rearrange (pointer events: mouse + touch) ---------- */
+var drag = null, dragMoved = false;
+wall.addEventListener("pointerdown", function (e) {
+  if (!arrange || e.button > 0 || e.target.closest(".ctl")) return;
+  var el = e.target.closest(".piece"); if (!el) return;
+  e.preventDefault();                       // stops the browser's own image drag, which would cancel ours
+  drag = { el: el, x: e.clientX, y: e.clientY, started: false }; dragMoved = false;
+  el.setPointerCapture(e.pointerId);
+});
+wall.addEventListener("pointermove", function (e) {
+  if (!drag) return;
+  if (!drag.started) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+    var r = drag.el.getBoundingClientRect();
+    drag.started = true; dragMoved = true; drag.dx = e.clientX - r.left; drag.dy = e.clientY - r.top;
+    drag.ghost = drag.el.cloneNode(true); drag.ghost.classList.add("ghost"); drag.ghost.style.width = r.width + "px";
+    document.body.appendChild(drag.ghost); drag.el.classList.add("dragging");
+  }
+  drag.ghost.style.left = (e.clientX - drag.dx) + "px"; drag.ghost.style.top = (e.clientY - drag.dy) + "px";
+  var over = document.elementFromPoint(e.clientX, e.clientY), t = over && over.closest(".piece");
+  if (t && t !== drag.el && t.parentNode === wall) {
+    var rr = t.getBoundingClientRect(), before = e.clientX < rr.left + rr.width / 2;
+    wall.insertBefore(drag.el, before ? t : t.nextSibling);
+  }
+  if (e.clientY < 70) scrollBy(0, -14); else if (e.clientY > innerHeight - 70) scrollBy(0, 14);
+});
+function endDrag() {
+  if (!drag) return;
+  if (drag.started) {
+    drag.ghost.remove(); drag.el.classList.remove("dragging");
+    var dom = Array.prototype.map.call(wall.querySelectorAll(".piece"), function (p) { return p.dataset.key; });
+    var rest = S.o.filter(function (k) { return dom.indexOf(k) < 0; });      // hidden / not shown keep their place at the end
+    S.o = dom.concat(rest); save();
+  }
+  drag = null; setTimeout(function () { dragMoved = false; }, 50);
+}
+wall.addEventListener("dragstart", function (e) { e.preventDefault(); });
+wall.addEventListener("pointerup", endDrag); wall.addEventListener("pointercancel", endDrag);
+
+/* ---------- toolbar ---------- */
+$("bArrange").onclick = function () {
+  arrange = !arrange; this.classList.toggle("on", arrange); this.textContent = arrange ? "Done" : "Arrange";
+  document.body.classList.toggle("arrange", arrange);
+  $("title").contentEditable = arrange ? "plaintext-only" : "false"; render();
+};
+$("title").addEventListener("input", function () { S.t = this.textContent.trim().slice(0, 80); save(); });
+$("title").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); this.blur(); } });
+$("bHidden").onclick = function () { showHidden = !showHidden; this.classList.toggle("on", showHidden); document.body.classList.toggle("show-hidden", showHidden); this.textContent = showHidden ? "Hide hidden" : "Show hidden"; render(); };
+$("sWall").onchange = function () { S.w = this.value; render(); save(); };
+$("bAddr").onclick = function () { $("taAddr").value = S.a.join("\n"); $("dAddr").showModal(); };
+$("bAddrSave").onclick = function () { $("dAddr").close(); setAddrs($("taAddr").value); };
+$("bShare").onclick = async function () {
+  clearTimeout(saveTimer);
+  try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
+  var url = location.origin + location.pathname + "#s=" + await pack(S);
+  history.replaceState(null, "", url);
+  try { await navigator.clipboard.writeText(url); toast("Share link copied. Anyone with it sees this wall."); }
+  catch (e) { prompt("Copy this link:", url); }
+};
+var toastT;
+function toast(s) { var t = $("toast"); t.textContent = s; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("on"); }, 3200); }
+
+/* ---------- start ---------- */
+(async function () { await loadState(); render(); loadAll(); })();
+})();
+</script>
+</body>
+</html>
