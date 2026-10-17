@@ -48,6 +48,7 @@
   .placard{margin-top:22px;background:var(--label);color:#2b2824;padding:10px 14px 11px;min-width:170px;max-width:260px;box-shadow:0 1px 3px rgba(0,0,0,.18)}
   .placard .t{font-family:var(--serif);font-size:15px;line-height:1.25;overflow-wrap:anywhere}
   .placard .c{font-family:var(--serif);font-style:italic;font-size:13px;color:#6f685e;margin-top:2px;overflow-wrap:anywhere}
+  .placard .n{font-family:var(--serif);font-style:italic;font-size:11px;color:#9a7b4f;margin-top:4px}
   .placard .m{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#8b8478;margin-top:6px}
   .ctl{position:absolute;top:-14px;right:-14px;display:none;gap:6px;z-index:3}
   body.arrange .ctl{display:flex}
@@ -141,6 +142,21 @@ var CHAINS = {
 // Tested 2026-10-17 from a browser: Filebase serves reliably; dweb.link/w3s.link answer 403, pinata 429, ipfs.io often unreachable. Order = best first.
 var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://4everland.io/ipfs/"];
 var MAX_PAGES = 40, LS = "nftwall_state_v1";
+/* Collections whose image server is gone, with a probable stand-in. Shown with an "unconfirmed" note, never silently.
+   ArbiNouns (Arbitrum) and OptiNouns (Optimism) share the contract address and the Nouns.Space pool of 50,000 images;
+   nouns.space expired, so ArbiNoun art is lost. Stand-in = OptiNoun image with the same number (unverified, 2026-10-17). */
+var PROBABLE = {
+  "a:0x43b91b168d210f722f2896d258c2c236b9cebb7b": function (id) {
+    return { name: "ArbiNoun #" + id, image: "ipfs://QmWBWAf8iCoN4wRGQVDhjJzLz5n5WoBB1YceLR9LRSZozc/" + id + ".png",
+             note: "Probable image (from OptiNoun #" + id + ", unconfirmed)" };
+  }
+};
+function applyProbable(it) {
+  var f = PROBABLE[it.chain + ":" + String(it.token.address_hash || it.token.address).toLowerCase()];
+  var md = it.metadata || {};
+  if (!f || it.image_url || md.image) return;
+  var p = f(it.id); it.metadata = Object.assign({}, md, { name: md.name || p.name, image: p.image }); it.note = p.note; it.chainTried = true;
+}
 
 /* ---------- state ---------- */
 var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [] };
@@ -312,7 +328,7 @@ async function fetchChain(addr, c, onPage) {
     (d.items || []).forEach(function (it) {
       if (!it.token) return;
       var key = c + ":" + String(it.token.address_hash || it.token.address).toLowerCase() + ":" + it.id;
-      it.chain = c; it.key = key; it.holder = addr;
+      it.chain = c; it.key = key; it.holder = addr; applyProbable(it);
       NFT[key] = it;
     });
     onPage(); next = d.next_page_params; n++;
@@ -391,6 +407,7 @@ function piece(it) {
   el.innerHTML = '<div class="ctl"><button class="star" title="Feature this piece" aria-label="Feature">★</button><button class="hide" title="Hide or show" aria-label="Hide">⦸</button></div>' +
     '<div class="frame"><div class="mat"><div class="art"></div></div></div>' +
     '<figcaption class="placard"><div class="t">' + esc(title(it)) + '</div><div class="c">' + esc(it.token.name || "Unknown collection") + '</div>' +
+    (it.note ? '<div class="n">' + esc(it.note) + '</div>' : "") +
     '<div class="m">' + CHAINS[it.chain].name + (it.value && it.value !== "1" ? " · ×" + esc(it.value) : "") + '</div></figcaption>';
   mountMedia(el.querySelector(".art"), it, false);
   el.querySelector(".star").onclick = function (e) { e.stopPropagation(); toggle(S.f, it.key); render(); save(); };
@@ -419,6 +436,7 @@ function setAddrs(text) {
 function openLb(it) {
   var md = it.metadata || {}, c = CHAINS[it.chain], ca = it.token.address_hash || it.token.address;
   $("lb").innerHTML = '<div class="big"></div><div class="info"><h3>' + esc(title(it)) + '</h3><div class="c">' + esc(it.token.name || "") + '</div>' +
+    (it.note ? '<div class="d" style="color:#e8cf9f;font-style:italic">' + esc(it.note) + '. The original image server (nouns.space) no longer exists.</div>' : "") +
     (md.description ? '<div class="d">' + esc(md.description) + '</div>' : "") +
     '<dl><dt>Chain</dt><dd>' + c.name + '</dd><dt>Token ID</dt><dd>' + esc(it.id) + '</dd><dt>Standard</dt><dd>' + esc(it.token_type || it.token.type) + '</dd>' +
     '<dt>Contract</dt><dd>' + esc(ca) + '</dd></dl>' +
