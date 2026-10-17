@@ -144,11 +144,12 @@ var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "http
 var MAX_PAGES = 40, LS = "nftwall_state_v1";
 /* Collections whose image server is gone, with a probable stand-in. Shown with an "unconfirmed" note, never silently.
    ArbiNouns (Arbitrum) and OptiNouns (Optimism) share the contract address and the Nouns.Space pool of 50,000 images;
-   nouns.space expired, so ArbiNoun art is lost. Stand-in = OptiNoun image with the same number (unverified, 2026-10-17). */
+   nouns.space expired, so ArbiNoun art is lost. Stand-in = OptiNoun image with the same number. #1 confirmed by its owner 2026-10-17; others unverified. */
 var PROBABLE = {
   "a:0x43b91b168d210f722f2896d258c2c236b9cebb7b": function (id) {
     return { name: "ArbiNoun #" + id, image: "ipfs://QmWBWAf8iCoN4wRGQVDhjJzLz5n5WoBB1YceLR9LRSZozc/" + id + ".png",
-             note: "Probable image (from OptiNoun #" + id + ", unconfirmed)" };
+             note: String(id) === "1" ? "Image recovered from OptiNoun #1 (confirmed by owner)"     // Stefan confirmed #1, 2026-10-17
+                                      : "Probable image (from OptiNoun #" + id + ", unconfirmed)" };
   }
 };
 function applyProbable(it) {
