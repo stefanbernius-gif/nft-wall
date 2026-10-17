@@ -32,7 +32,10 @@
   .tools button.on{background:var(--ink);color:var(--wall);border-color:var(--ink)}
   .tools select{appearance:none;padding-right:14px}
   .tools select option{color:#222}
-  .filters{max-width:1400px;margin:14px auto 0;padding:0 24px;display:flex;flex-wrap:wrap;gap:8px}
+  .filters{max-width:1400px;margin:14px auto 0;padding:0 24px;display:flex;flex-direction:column;gap:8px}
+  .frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .frow .lbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);min-width:58px}
+  .frow button.w{letter-spacing:.02em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:none}
   .filters:empty{display:none}
   .filters button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12px;letter-spacing:.12em;color:var(--ink-soft)}
   .filters button:hover{color:var(--ink);border-color:var(--ink-soft)}
@@ -174,7 +177,8 @@ function applyProbable(it) {
 var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [] };
 var NFT = {};          // key -> item
 var NOIMG = {};        // keys whose image failed everywhere (kept even when filtered off screen)
-var arrange = false, showHidden = false, chainFilter = null;   // filter is per viewer, not saved in the link
+var arrange = false, showHidden = false, chainFilter = null, walletFilter = null;
+var LABEL = {};        // resolved address (lowercase) -> what the user typed (ENS name or address)   // filter is per viewer, not saved in the link
 var $ = function (id) { return document.getElementById(id); };
 var wall = $("wall");
 
@@ -341,7 +345,9 @@ async function fetchChain(addr, c, onPage) {
     (d.items || []).forEach(function (it) {
       if (!it.token) return;
       var key = c + ":" + String(it.token.address_hash || it.token.address).toLowerCase() + ":" + it.id;
-      it.chain = c; it.key = key; it.holder = addr; applyProbable(it);
+      var a = addr.toLowerCase();
+      if (NFT[key]) { if (NFT[key].holders.indexOf(a) < 0) NFT[key].holders.push(a); return; }   // same NFT in two wallets (ERC-1155)
+      it.chain = c; it.key = key; it.holders = [a]; applyProbable(it);
       NFT[key] = it;
     });
     onPage(); next = d.next_page_params; n++;
@@ -349,11 +355,11 @@ async function fetchChain(addr, c, onPage) {
 }
 var loadRun = 0;
 async function loadAll() {
-  var run = ++loadRun; NFT = {}; NOIMG = {}; render();
+  var run = ++loadRun; NFT = {}; NOIMG = {}; LABEL = {}; walletFilter = null; render();
   if (!S.a.length) return;
   var addrs = [];
   for (var i = 0; i < S.a.length; i++) {
-    try { var r = await resolveAddr(S.a[i]); if (r) addrs.push(r); else toast("Not found: " + S.a[i]); } catch (e) { toast("Could not look up " + S.a[i]); }
+    try { var r = await resolveAddr(S.a[i]); if (r) { addrs.push(r); LABEL[r.toLowerCase()] = S.a[i]; } else toast("Not found: " + S.a[i]); } catch (e) { toast("Could not look up " + S.a[i]); }
   }
   var jobs = [], done = 0, failed = [];
   addrs.forEach(function (a) { Object.keys(CHAINS).forEach(function (c) { jobs.push({ a: a, c: c }); }); });
@@ -383,12 +389,15 @@ function ordered() {
 
 /* ---------- render ---------- */
 function setStatus(s) { $("status").textContent = s; }
+function inWallet(k) { return !walletFilter || (NFT[k] && NFT[k].holders.indexOf(walletFilter) >= 0); }
+function visible(k) { return showHidden || (S.h.indexOf(k) < 0 && !NOIMG[k]); }
+function wname(a) { var l = LABEL[a] || a; return /^0x[0-9a-f]{40}$/i.test(l) ? l.slice(0, 6) + "…" + l.slice(-4) : l; }
 function render() {
   document.body.dataset.wall = S.w; $("sWall").value = S.w;
   $("title").textContent = S.t || "My NFT Collection"; document.title = (S.t || "NFT Wall");
   $("tools").hidden = !S.a.length;
   if (!S.a.length) return renderEmpty();
-  var keys = ordered(), shown = keys.filter(function (k) { return (showHidden || S.h.indexOf(k) < 0) && (!chainFilter || k[0] === chainFilter); });
+  var keys = ordered(), shown = keys.filter(function (k) { return (showHidden || S.h.indexOf(k) < 0) && (!chainFilter || k[0] === chainFilter) && inWallet(k); });
   $("hint").textContent = arrange ? "Drag a frame to move it. ★ makes it a featured piece. ⦸ hides it. Changes save into the share link." : "";
   var have = {};
   Array.prototype.forEach.call(wall.children, function (el) { if (el.dataset.key) have[el.dataset.key] = el; });
@@ -414,7 +423,7 @@ function counts() {
 }
 function chainCounts(keys) {
   var n = {}; Object.keys(CHAINS).forEach(function (c) { n[c] = 0; });
-  keys.forEach(function (k) { if (showHidden || (S.h.indexOf(k) < 0 && !NOIMG[k])) n[k[0]]++; });
+  keys.forEach(function (k) { if (visible(k) && inWallet(k)) n[k[0]]++; });
   return n;
 }
 function chainSummary(keys) {
@@ -425,8 +434,16 @@ function renderFilters(keys) {
   var n = chainCounts(keys), have = Object.keys(SHORT).filter(function (c) { return n[c]; });
   if (chainFilter && have.indexOf(chainFilter) < 0 && !keys.some(function (k) { return k[0] === chainFilter; })) chainFilter = null;
   var total = have.reduce(function (a, c) { return a + n[c]; }, 0);
-  var html = have.length > 1 ? '<button data-c="" class="' + (chainFilter ? "" : "on") + '">ALL<span>' + total + '</span></button>' +
-    have.map(function (c) { return '<button data-c="' + c + '" class="' + (chainFilter === c ? "on" : "") + '" title="' + CHAINS[c].name + '">' + SHORT[c] + '<span>' + n[c] + '</span></button>'; }).join("") : "";
+  var html = have.length > 1 || chainFilter ? '<div class="frow"><span class="lbl">Chain</span><button data-c="" class="' + (chainFilter ? "" : "on") + '">ALL<span>' + total + '</span></button>' +
+    have.map(function (c) { return '<button data-c="' + c + '" class="' + (chainFilter === c ? "on" : "") + '" title="' + CHAINS[c].name + '">' + SHORT[c] + '<span>' + n[c] + '</span></button>'; }).join("") + '</div>' : "";
+  var wallets = Object.keys(LABEL);
+  if (wallets.length > 1) {
+    var wn = {}; wallets.forEach(function (a) { wn[a] = 0; });
+    var all = 0;
+    keys.forEach(function (k) { if (!visible(k) || (chainFilter && k[0] !== chainFilter)) return; all++; NFT[k].holders.forEach(function (a) { if (a in wn) wn[a]++; }); });
+    html += '<div class="frow"><span class="lbl">Wallet</span><button data-w="" class="' + (walletFilter ? "" : "on") + '">ALL<span>' + all + '</span></button>' +
+      wallets.map(function (a) { return '<button class="w' + (walletFilter === a ? " on" : "") + '" data-w="' + a + '" title="' + a + '">' + esc(wname(a)) + '<span>' + wn[a] + '</span></button>'; }).join("") + '</div>';
+  }
   if ($("filters").innerHTML !== html) $("filters").innerHTML = html;
 }
 function piece(it) {
@@ -466,7 +483,7 @@ function openLb(it) {
     (it.note ? '<div class="d" style="color:#e8cf9f;font-style:italic">' + esc(it.note) + '. The original image server (nouns.space) no longer exists.</div>' : "") +
     (md.description ? '<div class="d">' + esc(md.description) + '</div>' : "") +
     '<dl><dt>Chain</dt><dd>' + c.name + '</dd><dt>Token ID</dt><dd>' + esc(it.id) + '</dd><dt>Standard</dt><dd>' + esc(it.token_type || it.token.type) + '</dd>' +
-    '<dt>Contract</dt><dd>' + esc(ca) + '</dd></dl>' +
+    '<dt>Contract</dt><dd>' + esc(ca) + '</dd><dt>Wallet</dt><dd>' + it.holders.map(function (a) { return esc(wname(a)); }).join(", ") + '</dd></dl>' +
     '<a href="' + c.explorer + '/token/' + ca + '/instance/' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener">View on ' + c.name + ' explorer ↗</a></div>';
   mountMedia($("lb").querySelector(".big"), it, true);
   $("dLb").showModal();
@@ -526,7 +543,9 @@ $("title").addEventListener("keydown", function (e) { if (e.key === "Enter") { e
 $("bHidden").onclick = function () { showHidden = !showHidden; this.classList.toggle("on", showHidden); document.body.classList.toggle("show-hidden", showHidden); this.textContent = showHidden ? "Hide hidden" : "Show hidden"; render(); };
 $("filters").addEventListener("click", function (e) {
   var btn = e.target.closest("button"); if (!btn) return;
-  chainFilter = btn.dataset.c || null; render(); scrollTo({ top: 0, behavior: "smooth" });
+  if ("c" in btn.dataset) chainFilter = btn.dataset.c || null;
+  if ("w" in btn.dataset) walletFilter = btn.dataset.w || null;
+  render(); scrollTo({ top: 0, behavior: "smooth" });
 });
 $("sWall").onchange = function () { S.w = this.value; render(); save(); };
 $("bAddr").onclick = function () { $("taAddr").value = S.a.join("\n"); $("dAddr").showModal(); };
