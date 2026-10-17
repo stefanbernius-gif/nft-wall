@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NFT Wall</title>
-<meta name="description" content="A museum wall for NFTs on Ethereum, Arbitrum, Optimism, zkSync, Polygon and Base. No login.">
+<meta name="description" content="A museum wall for NFTs on Ethereum, Arbitrum, Optimism, zkSync, Polygon, Base and Zora. No login.">
 <style>
   :root{
     --wall:#ebe7df; --ink:#2b2824; --ink-soft:#6f685e; --line:rgba(0,0,0,.12);
@@ -113,7 +113,7 @@
 <header>
   <div class="titlebox">
     <h1 id="title" spellcheck="false">My NFT Collection</h1>
-    <p id="sub">Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base</p>
+    <p id="sub">Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base · Zora</p>
   </div>
   <div class="tools" id="tools" hidden>
     <button id="bArrange" title="Drag to reorder, star favorites, hide pieces">Arrange</button>
@@ -150,10 +150,12 @@ var CHAINS = {
   o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io", rpc: "https://mainnet.optimism.io" },
   z: { name: "zkSync Era", api: "https://zksync.blockscout.com", explorer: "https://zksync.blockscout.com", rpc: "https://mainnet.era.zksync.io" },
   p: { name: "Polygon", api: "https://polygon.blockscout.com", explorer: "https://polygon.blockscout.com", rpc: "https://polygon-bor-rpc.publicnode.com" },
-  b: { name: "Base", api: "https://base.blockscout.com", explorer: "https://base.blockscout.com", rpc: "https://mainnet.base.org" }
+  b: { name: "Base", api: "https://base.blockscout.com", explorer: "https://base.blockscout.com", rpc: "https://mainnet.base.org" },
+  // Zora: its explorer has no open API, so NFTs are read from the chain itself (transfer logs + balance checks)
+  r: { name: "Zora", api: null, explorer: "https://explorer.zora.energy", rpc: "https://rpc.zora.energy", logs: true }
 };
 // Tested 2026-10-17 from a browser: Filebase serves reliably; dweb.link/w3s.link answer 403, pinata 429, ipfs.io often unreachable. Order = best first.
-var SHORT = { e: "ETH", a: "ARB", o: "OP", z: "ZK", p: "POLY", b: "BASE" };   // filter labels, in this order
+var SHORT = { e: "ETH", a: "ARB", o: "OP", z: "ZK", p: "POLY", b: "BASE", r: "ZORA" };   // filter labels, in this order
 var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://4everland.io/ipfs/"];
 var MAX_PAGES = 40, LS = "nftwall_state_v1";
 /* Collections whose image server is gone, with a probable stand-in. Shown with an "unconfirmed" note, never silently.
@@ -262,11 +264,15 @@ function mountMedia(box, it, big) {
 function missing(box) {
   var it = box._it;
   if (it && !it.chainTried) {                  // the explorer had nothing usable: ask the blockchain itself
-    it.chainTried = true;
     box.innerHTML = '<div class="ph">Looking on-chain…</div>';
-    chainMeta(it).then(function (ok) {
-      if (ok) { refreshPlacard(it); mountMedia(box, it, !box.closest(".piece")); } else missing(box);
-    });
+    var go = function () {
+      if (it.chainTried) return; it.chainTried = true;
+      chainMeta(it).then(function (ok) {
+        if (ok) { refreshPlacard(it); mountMedia(box, it, !box.closest(".piece")); } else missing(box);
+      });
+    };
+    if (!box.closest(".piece")) go();          // detail view: right away
+    else new IntersectionObserver(function (en, ob) { if (en[0].isIntersecting) { ob.disconnect(); go(); } }, { rootMargin: "600px" }).observe(box);
     return;
   }
   box.innerHTML = '<div class="ph">Image not available</div>';
@@ -286,15 +292,25 @@ async function ethCall(c, to, data) {
 }
 async function fetchText(urls) {
   for (var i = 0; i < urls.length; i++) {
-    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 12000);
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 8000);
     try { var r = await fetch(urls[i], { signal: ac.signal }); clearTimeout(t); if (r.ok) return await r.text(); } catch (e) { clearTimeout(t); }
   }
   return null;
 }
-async function chainMeta(it) {
+var metaQ = [], metaBusy = 0;
+function chainMeta(it) {
+  return new Promise(function (res) { metaQ.push([it, res]); pumpMeta(); });
+}
+function pumpMeta() {
+  while (metaBusy < 6 && metaQ.length) {
+    var job = metaQ.shift(); metaBusy++;
+    chainMetaNow(job[0]).then(job[1]).finally(function () { metaBusy--; pumpMeta(); });
+  }
+}
+async function chainMetaNow(it) {
   try {
     var ca = it.token.address_hash || it.token.address, idHex = BigInt(it.id).toString(16).padStart(64, "0");
-    var uri = await ethCall(it.chain, ca, "0xc87b56dd" + idHex).catch(function () { return null; });            // ERC-721 tokenURI
+    var uri = it.tokenUri || await ethCall(it.chain, ca, "0xc87b56dd" + idHex).catch(function () { return null; });   // ERC-721 tokenURI
     if (!uri) { uri = await ethCall(it.chain, ca, "0x0e89341c" + idHex).catch(function () { return null; });    // ERC-1155 uri
       if (uri) uri = uri.replace("{id}", idHex); }
     if (!uri) return false;
@@ -337,6 +353,7 @@ async function resolveAddr(a) {
   return hit ? (hit.address_hash || hit.address) : null;
 }
 async function fetchChain(addr, c, onPage) {
+  if (CHAINS[c].logs) return fetchByLogs(addr, c, onPage);
   var base = CHAINS[c].api + "/api/v2/addresses/" + addr + "/nft?type=ERC-721,ERC-1155,ERC-404";
   var next = null, n = 0;
   do {
@@ -352,6 +369,70 @@ async function fetchChain(addr, c, onPage) {
     });
     onPage(); next = d.next_page_params; n++;
   } while (next && n < MAX_PAGES);
+}
+/* ---------- chains without an explorer API: read NFTs from transfer logs ---------- */
+var T1155S = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62", T1155B = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb",
+    T721 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+function p64(h) { return String(h).replace(/^0x/, "").toLowerCase().padStart(64, "0"); }
+async function rpcBatch(c, calls) {             // calls: [[method, params], ...] -> results in the same order
+  // The free Zora RPC rate-limits (~80 calls in a burst): small batches, and refused calls are retried with a pause.
+  var out = new Array(calls.length), todo = calls.map(function (_, i) { return i; });
+  for (var attempt = 0; todo.length && attempt < 8; attempt++) {
+    if (attempt) await sleep(1200 * attempt);
+    var failed = [];
+    for (var k = 0; k < todo.length; k += 20) {
+      var ids = todo.slice(k, k + 20);
+      try {
+        var r = await fetch(CHAINS[c].rpc, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ids.map(function (i) { return { jsonrpc: "2.0", id: i, method: calls[i][0], params: calls[i][1] }; })) });
+        var res = await r.json(); if (!Array.isArray(res)) res = [];
+        var got = {};
+        res.forEach(function (x) {
+          got[x.id] = 1;
+          if (x.error && /rate|limit|too many/i.test(x.error.message || "")) failed.push(x.id); else out[x.id] = x.result;
+        });
+        ids.forEach(function (i) { if (!got[i]) failed.push(i); });
+      } catch (e) { failed = failed.concat(ids); }
+      await sleep(250);
+    }
+    todo = failed;
+  }
+  return out;
+}
+async function fetchByLogs(addr, c, onPage) {
+  var me = "0x" + p64(addr), lc = addr.toLowerCase();
+  var logs = await rpcBatch(c, [
+    ["eth_getLogs", [{ fromBlock: "0x0", toBlock: "latest", topics: [[T1155S, T1155B], null, null, me] }]],
+    ["eth_getLogs", [{ fromBlock: "0x0", toBlock: "latest", topics: [T721, null, me] }]]]);
+  var cand = {};
+  (logs[0] || []).forEach(function (l) {
+    var d = l.data.slice(2), w = function (i) { return d.slice(i * 64, (i + 1) * 64); };
+    if (l.topics[0] === T1155S) cand["1155|" + l.address.toLowerCase() + "|" + w(0)] = 1;
+    else { var o = parseInt(w(0), 16) / 32, n = parseInt(w(o), 16); for (var i = 1; i <= n; i++) cand["1155|" + l.address.toLowerCase() + "|" + w(o + i)] = 1; }
+  });
+  (logs[1] || []).forEach(function (l) { if (l.topics.length === 4) cand["721|" + l.address.toLowerCase() + "|" + p64(l.topics[3])] = 1; });
+  var list = Object.keys(cand).map(function (k) { var x = k.split("|"); return { std: x[0], ca: x[1], id: x[2] }; });
+  if (!list.length) return;
+  var own = await rpcBatch(c, list.map(function (x) {
+    return ["eth_call", [{ to: x.ca, data: x.std === "1155" ? "0x00fdd58e" + p64(addr) + x.id : "0x6352211e" + x.id }, "latest"]];
+  }));
+  var mine = list.filter(function (x, i) {
+    var r = own[i]; if (!r || r === "0x") return false;
+    return x.std === "1155" ? BigInt(r) > 0n : r.slice(-40).toLowerCase() === lc.slice(2);
+  });
+  mine.forEach(function (x) { x.bal = x.std === "1155" ? BigInt(own[list.indexOf(x)]).toString() : "1"; });
+  var cas = mine.map(function (x) { return x.ca; }).filter(function (v, i, a) { return a.indexOf(v) === i; });
+  var names = await rpcBatch(c, cas.map(function (ca) { return ["eth_call", [{ to: ca, data: "0x06fdde03" }, "latest"]]; }));
+  var uris = await rpcBatch(c, mine.map(function (x) { return ["eth_call", [{ to: x.ca, data: (x.std === "1155" ? "0x0e89341c" : "0xc87b56dd") + x.id }, "latest"]]; }));
+  mine.forEach(function (x, i) {
+    var id = BigInt("0x" + x.id).toString(), key = c + ":" + x.ca + ":" + id;
+    if (NFT[key]) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
+    var uri = abiString(uris[i]); if (uri) uri = uri.replace("{id}", x.id);
+    NFT[key] = { id: id, key: key, chain: c, holders: [lc], value: x.bal, token_type: x.std === "1155" ? "ERC-1155" : "ERC-721", tokenUri: uri,
+      token: { address_hash: x.ca, name: abiString(names[cas.indexOf(x.ca)]) || "Unknown collection", type: x.std === "1155" ? "ERC-1155" : "ERC-721" },
+      metadata: null, image_url: null };
+  });
+  onPage();
 }
 var loadRun = 0;
 async function loadAll() {
@@ -461,12 +542,12 @@ function piece(it) {
 }
 function toggle(arr, k) { var i = arr.indexOf(k); if (i >= 0) arr.splice(i, 1); else arr.push(k); }
 function renderEmpty() {
-  $("sub").textContent = "Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base"; $("hint").textContent = ""; setStatus("");
+  $("sub").textContent = "Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base · Zora"; $("hint").textContent = ""; setStatus("");
   wall.innerHTML = '<div class="empty"><h2>Hang your NFTs on a wall</h2>' +
-    '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum, Optimism, zkSync, Polygon and Base. No login, nothing to install.</p>' +
+    '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum, Optimism, zkSync, Polygon, Base and Zora. No login, nothing to install.</p>' +
     '<textarea id="taFirst" spellcheck="false" placeholder="0x1234…&#10;name.eth"></textarea>' +
     '<button class="btn" id="bFirst">Hang my collection</button>' +
-    '<div class="chains"><span>ETH</span><span>ARB</span><span>OP</span><span>ZK</span><span>POLY</span><span>BASE</span></div></div>';
+    '<div class="chains"><span>ETH</span><span>ARB</span><span>OP</span><span>ZK</span><span>POLY</span><span>BASE</span><span>ZORA</span></div></div>';
   $("bFirst").onclick = function () { setAddrs($("taFirst").value); };
 }
 function setAddrs(text) {

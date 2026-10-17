@@ -1,6 +1,6 @@
 # NFT Wall
 
-A museum wall for NFTs on Ethereum, Arbitrum, Optimism, zkSync, Polygon and Base. One static HTML file, no login, no server.
+A museum wall for NFTs on Ethereum, Arbitrum, Optimism, zkSync, Polygon, Base and Zora. One static HTML file, no login, no server.
 
 - Paste public wallet addresses (or ENS names). NFTs load from the free Blockscout explorer APIs.
 - Arrange: drag frames, star favorites (larger gilded frame), hide pieces, pick a wall color, rename the wall.
