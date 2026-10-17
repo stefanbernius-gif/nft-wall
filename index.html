@@ -134,9 +134,9 @@
 "use strict";
 /* ---------- config ---------- */
 var CHAINS = {
-  e: { name: "Ethereum", api: "https://eth.blockscout.com", explorer: "https://eth.blockscout.com" },
-  a: { name: "Arbitrum", api: "https://arbitrum.blockscout.com", explorer: "https://arbitrum.blockscout.com" },
-  o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io" }
+  e: { name: "Ethereum", api: "https://eth.blockscout.com", explorer: "https://eth.blockscout.com", rpc: "https://ethereum-rpc.publicnode.com" },
+  a: { name: "Arbitrum", api: "https://arbitrum.blockscout.com", explorer: "https://arbitrum.blockscout.com", rpc: "https://arb1.arbitrum.io/rpc" },
+  o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io", rpc: "https://mainnet.optimism.io" }
 };
 // Tested 2026-10-17 from a browser: Filebase serves reliably; dweb.link/w3s.link answer 403, pinata 429, ipfs.io often unreachable. Order = best first.
 var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://4everland.io/ipfs/"];
@@ -208,6 +208,7 @@ function mediaFor(it, big) {
 }
 function mountMedia(box, it, big) {
   var m = mediaFor(it, big);
+  box._it = it;
   box.innerHTML = "";
   if (!m.imgs.length && m.vids.length) {
     var v = document.createElement("video"); v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true; v.src = m.vids[0];
@@ -217,7 +218,7 @@ function mountMedia(box, it, big) {
   var img = new Image(), i = 0;
   img.alt = title(it); img.decoding = "async"; img.draggable = false; if (!big) img.loading = "lazy";
   img.referrerPolicy = "no-referrer";
-  var timer, wait = big ? 20000 : 8000;
+  var timer, wait = big ? 30000 : 25000;   // big 4000 px PNGs on Arweave need time when many load at once
   function next() { clearTimeout(timer); i++; if (i < m.imgs.length) go(); else missing(box); }
   function go() { img.src = m.imgs[i]; if (img.loading !== "lazy" || box.dataset.seen) timer = setTimeout(next, wait); }   // a hanging gateway counts as failed
   img.onerror = next; img.onload = function () { clearTimeout(timer); };
@@ -226,10 +227,63 @@ function mountMedia(box, it, big) {
   box.appendChild(img);
 }
 function missing(box) {
+  var it = box._it;
+  if (it && !it.chainTried) {                  // the explorer had nothing usable: ask the blockchain itself
+    it.chainTried = true;
+    box.innerHTML = '<div class="ph">Looking on-chain…</div>';
+    chainMeta(it).then(function (ok) {
+      if (ok) { refreshPlacard(it); mountMedia(box, it, !box.closest(".piece")); } else missing(box);
+    });
+    return;
+  }
   box.innerHTML = '<div class="ph">Image not available</div>';
   var p = box.closest(".piece"); if (p && !p.classList.contains("noimg")) { p.classList.add("noimg"); counts(); }
 }
-function title(it) { var md = it.metadata || {}; return md.name || ((it.token.name || "Untitled") + " #" + short(it.id)); }
+/* ---------- on-chain fallback: tokenURI / uri straight from the contract ---------- */
+function abiString(hex) {
+  if (!hex || hex.length < 130) return null;
+  var b = hex.slice(2), len = parseInt(b.slice(64, 128), 16), out = b.slice(128, 128 + len * 2), bytes = new Uint8Array(len);
+  for (var i = 0; i < len; i++) bytes[i] = parseInt(out.substr(i * 2, 2), 16);
+  return new TextDecoder().decode(bytes);
+}
+async function ethCall(c, to, data) {
+  var r = await fetch(CHAINS[c].rpc, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: to, data: data }, "latest"] }) });
+  var j = await r.json(); return j.result && j.result !== "0x" ? abiString(j.result) : null;
+}
+async function fetchText(urls) {
+  for (var i = 0; i < urls.length; i++) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 12000);
+    try { var r = await fetch(urls[i], { signal: ac.signal }); clearTimeout(t); if (r.ok) return await r.text(); } catch (e) { clearTimeout(t); }
+  }
+  return null;
+}
+async function chainMeta(it) {
+  try {
+    var ca = it.token.address_hash || it.token.address, idHex = BigInt(it.id).toString(16).padStart(64, "0");
+    var uri = await ethCall(it.chain, ca, "0xc87b56dd" + idHex).catch(function () { return null; });            // ERC-721 tokenURI
+    if (!uri) { uri = await ethCall(it.chain, ca, "0x0e89341c" + idHex).catch(function () { return null; });    // ERC-1155 uri
+      if (uri) uri = uri.replace("{id}", idHex); }
+    if (!uri) return false;
+    var txt = null, m = uri.match(/^data:application\/json(;[^,]*)?,(.*)$/s);
+    if (m) txt = /base64/.test(m[1] || "") ? new TextDecoder().decode(unb64(m[2])) : decodeURIComponent(m[2]);
+    else txt = await fetchText(candidates(uri));
+    if (!txt) return false;
+    var md = JSON.parse(txt);
+    if (!md.image && !md.image_url && !md.image_data && !md.animation_url) return false;
+    it.metadata = Object.assign({}, it.metadata || {}, md);
+    it.image_url = null; it.thumbnails = null;
+    return true;
+  } catch (e) { return false; }
+}
+function unb64(str) { var s = atob(str), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+function refreshPlacard(it) {
+  var el = wall.querySelector('.piece[data-key="' + it.key + '"] .placard .t'); if (el) el.textContent = title(it);
+}
+function title(it) {
+  var md = it.metadata || {}, t = md.name || ((it.token.name || "Untitled") + " #" + it.id);
+  return t.replace(/\d{13,}/g, function (n) { return short(n); });      // 70-digit token ids do not fit a museum label
+}
 function short(id) { id = String(id); return id.length > 12 ? id.slice(0, 6) + "…" + id.slice(-4) : id; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
