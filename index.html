@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NFT Wall</title>
-<meta name="description" content="A museum wall for NFTs on Ethereum, Arbitrum and Optimism. No login.">
+<meta name="description" content="A museum wall for NFTs on Ethereum, Arbitrum, Optimism, zkSync, Polygon and Base. No login.">
 <style>
   :root{
     --wall:#ebe7df; --ink:#2b2824; --ink-soft:#6f685e; --line:rgba(0,0,0,.12);
@@ -32,6 +32,12 @@
   .tools button.on{background:var(--ink);color:var(--wall);border-color:var(--ink)}
   .tools select{appearance:none;padding-right:14px}
   .tools select option{color:#222}
+  .filters{max-width:1400px;margin:14px auto 0;padding:0 24px;display:flex;flex-wrap:wrap;gap:8px}
+  .filters:empty{display:none}
+  .filters button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:12px;letter-spacing:.12em;color:var(--ink-soft)}
+  .filters button:hover{color:var(--ink);border-color:var(--ink-soft)}
+  .filters button.on{background:var(--ink);color:var(--wall);border-color:var(--ink)}
+  .filters button span{opacity:.6;margin-left:6px;letter-spacing:0}
   .hint{max-width:1400px;margin:0 auto;padding:0 24px;font-size:13px;color:var(--ink-soft);min-height:20px}
   /* wall */
   #wall{max-width:1400px;margin:0 auto;padding:48px 24px 120px;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:88px 72px}
@@ -92,7 +98,7 @@
   .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#2b2824;color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:translateX(-50%)}
   @media (max-width:640px){
-    header{padding:28px 16px 4px}.hint,.status{padding:0 16px}
+    header{padding:28px 16px 4px}.hint,.status,.filters{padding:0 16px}
     #wall{padding:36px 16px 100px;gap:64px 28px}
     .art{width:150px;height:150px}.mat{padding:16px}.frame{padding:9px}
     .piece.fav .art{width:240px;height:240px}
@@ -104,7 +110,7 @@
 <header>
   <div class="titlebox">
     <h1 id="title" spellcheck="false">My NFT Collection</h1>
-    <p id="sub">Ethereum · Arbitrum · Optimism</p>
+    <p id="sub">Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base</p>
   </div>
   <div class="tools" id="tools" hidden>
     <button id="bArrange" title="Drag to reorder, star favorites, hide pieces">Arrange</button>
@@ -117,6 +123,7 @@
     <button id="bShare">Copy share link</button>
   </div>
 </header>
+<nav class="filters" id="filters" aria-label="Filter by blockchain"></nav>
 <div class="hint" id="hint"></div>
 <div class="status" id="status"></div>
 <main id="wall"></main>
@@ -137,9 +144,13 @@
 var CHAINS = {
   e: { name: "Ethereum", api: "https://eth.blockscout.com", explorer: "https://eth.blockscout.com", rpc: "https://ethereum-rpc.publicnode.com" },
   a: { name: "Arbitrum", api: "https://arbitrum.blockscout.com", explorer: "https://arbitrum.blockscout.com", rpc: "https://arb1.arbitrum.io/rpc" },
-  o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io", rpc: "https://mainnet.optimism.io" }
+  o: { name: "Optimism", api: "https://explorer.optimism.io", explorer: "https://explorer.optimism.io", rpc: "https://mainnet.optimism.io" },
+  z: { name: "zkSync Era", api: "https://zksync.blockscout.com", explorer: "https://zksync.blockscout.com", rpc: "https://mainnet.era.zksync.io" },
+  p: { name: "Polygon", api: "https://polygon.blockscout.com", explorer: "https://polygon.blockscout.com", rpc: "https://polygon-bor-rpc.publicnode.com" },
+  b: { name: "Base", api: "https://base.blockscout.com", explorer: "https://base.blockscout.com", rpc: "https://mainnet.base.org" }
 };
 // Tested 2026-10-17 from a browser: Filebase serves reliably; dweb.link/w3s.link answer 403, pinata 429, ipfs.io often unreachable. Order = best first.
+var SHORT = { e: "ETH", a: "ARB", o: "OP", z: "ZK", p: "POLY", b: "BASE" };   // filter labels, in this order
 var GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.io/ipfs/", "https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://4everland.io/ipfs/"];
 var MAX_PAGES = 40, LS = "nftwall_state_v1";
 /* Collections whose image server is gone, with a probable stand-in. Shown with an "unconfirmed" note, never silently.
@@ -162,7 +173,8 @@ function applyProbable(it) {
 /* ---------- state ---------- */
 var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [] };
 var NFT = {};          // key -> item
-var arrange = false, showHidden = false;
+var NOIMG = {};        // keys whose image failed everywhere (kept even when filtered off screen)
+var arrange = false, showHidden = false, chainFilter = null;   // filter is per viewer, not saved in the link
 var $ = function (id) { return document.getElementById(id); };
 var wall = $("wall");
 
@@ -254,7 +266,7 @@ function missing(box) {
     return;
   }
   box.innerHTML = '<div class="ph">Image not available</div>';
-  var p = box.closest(".piece"); if (p && !p.classList.contains("noimg")) { p.classList.add("noimg"); counts(); }
+  var p = box.closest(".piece"); if (p && !p.classList.contains("noimg")) { p.classList.add("noimg"); NOIMG[p.dataset.key] = 1; counts(); }
 }
 /* ---------- on-chain fallback: tokenURI / uri straight from the contract ---------- */
 function abiString(hex) {
@@ -337,7 +349,7 @@ async function fetchChain(addr, c, onPage) {
 }
 var loadRun = 0;
 async function loadAll() {
-  var run = ++loadRun; NFT = {}; render();
+  var run = ++loadRun; NFT = {}; NOIMG = {}; render();
   if (!S.a.length) return;
   var addrs = [];
   for (var i = 0; i < S.a.length; i++) {
@@ -376,7 +388,7 @@ function render() {
   $("title").textContent = S.t || "My NFT Collection"; document.title = (S.t || "NFT Wall");
   $("tools").hidden = !S.a.length;
   if (!S.a.length) return renderEmpty();
-  var keys = ordered(), shown = keys.filter(function (k) { return showHidden || S.h.indexOf(k) < 0; });
+  var keys = ordered(), shown = keys.filter(function (k) { return (showHidden || S.h.indexOf(k) < 0) && (!chainFilter || k[0] === chainFilter); });
   $("hint").textContent = arrange ? "Drag a frame to move it. ★ makes it a featured piece. ⦸ hides it. Changes save into the share link." : "";
   var have = {};
   Array.prototype.forEach.call(wall.children, function (el) { if (el.dataset.key) have[el.dataset.key] = el; });
@@ -394,14 +406,28 @@ function render() {
 }
 function counts() {
   var keys = ordered(), hidden = keys.filter(function (k) { return S.h.indexOf(k) >= 0; }).length;
-  var noimg = wall.querySelectorAll(".piece.noimg:not(.hidden-piece)").length;
+  var noimg = keys.filter(function (k) { return NOIMG[k] && S.h.indexOf(k) < 0; }).length;
   var extra = [hidden ? hidden + " hidden" : "", noimg ? noimg + " without image" : ""].filter(Boolean).join(" · ");
   $("sub").textContent = (keys.length - hidden - noimg) + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
   $("bHidden").hidden = !hidden && !noimg && !showHidden;
+  renderFilters(keys);
+}
+function chainCounts(keys) {
+  var n = {}; Object.keys(CHAINS).forEach(function (c) { n[c] = 0; });
+  keys.forEach(function (k) { if (showHidden || (S.h.indexOf(k) < 0 && !NOIMG[k])) n[k[0]]++; });
+  return n;
 }
 function chainSummary(keys) {
-  var n = { e: 0, a: 0, o: 0 }; keys.forEach(function (k) { if (S.h.indexOf(k) < 0) n[k[0]]++; });
-  return Object.keys(n).filter(function (c) { return n[c]; }).map(function (c) { return CHAINS[c].name + " " + n[c]; }).join(" · ") || "Ethereum · Arbitrum · Optimism";
+  var n = chainCounts(keys);
+  return Object.keys(n).filter(function (c) { return n[c]; }).map(function (c) { return SHORT[c] + " " + n[c]; }).join(" · ");
+}
+function renderFilters(keys) {
+  var n = chainCounts(keys), have = Object.keys(SHORT).filter(function (c) { return n[c]; });
+  if (chainFilter && have.indexOf(chainFilter) < 0 && !keys.some(function (k) { return k[0] === chainFilter; })) chainFilter = null;
+  var total = have.reduce(function (a, c) { return a + n[c]; }, 0);
+  var html = have.length > 1 ? '<button data-c="" class="' + (chainFilter ? "" : "on") + '">ALL<span>' + total + '</span></button>' +
+    have.map(function (c) { return '<button data-c="' + c + '" class="' + (chainFilter === c ? "on" : "") + '" title="' + CHAINS[c].name + '">' + SHORT[c] + '<span>' + n[c] + '</span></button>'; }).join("") : "";
+  if ($("filters").innerHTML !== html) $("filters").innerHTML = html;
 }
 function piece(it) {
   var el = document.createElement("figure"); el.className = "piece"; el.dataset.key = it.key; el.style.margin = "0";
@@ -418,12 +444,12 @@ function piece(it) {
 }
 function toggle(arr, k) { var i = arr.indexOf(k); if (i >= 0) arr.splice(i, 1); else arr.push(k); }
 function renderEmpty() {
-  $("sub").textContent = "Ethereum · Arbitrum · Optimism"; $("hint").textContent = ""; setStatus("");
+  $("sub").textContent = "Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base"; $("hint").textContent = ""; setStatus("");
   wall.innerHTML = '<div class="empty"><h2>Hang your NFTs on a wall</h2>' +
-    '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum and Optimism. No login, nothing to install.</p>' +
+    '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum, Optimism, zkSync, Polygon and Base. No login, nothing to install.</p>' +
     '<textarea id="taFirst" spellcheck="false" placeholder="0x1234…&#10;name.eth"></textarea>' +
     '<button class="btn" id="bFirst">Hang my collection</button>' +
-    '<div class="chains"><span>Ethereum</span><span>Arbitrum</span><span>Optimism</span></div></div>';
+    '<div class="chains"><span>ETH</span><span>ARB</span><span>OP</span><span>ZK</span><span>POLY</span><span>BASE</span></div></div>';
   $("bFirst").onclick = function () { setAddrs($("taFirst").value); };
 }
 function setAddrs(text) {
@@ -480,8 +506,9 @@ function endDrag() {
   if (drag.started) {
     drag.ghost.remove(); drag.el.classList.remove("dragging");
     var dom = Array.prototype.map.call(wall.querySelectorAll(".piece"), function (p) { return p.dataset.key; });
-    var rest = S.o.filter(function (k) { return dom.indexOf(k) < 0; });      // hidden / not shown keep their place at the end
-    S.o = dom.concat(rest); save();
+    var onWall = {}, i = 0; dom.forEach(function (k) { onWall[k] = 1; });
+    // pieces on screen take their new order; hidden or filtered-out pieces keep their slots
+    S.o = ordered().map(function (k) { return onWall[k] ? dom[i++] : k; }); save();
   }
   drag = null; setTimeout(function () { dragMoved = false; }, 50);
 }
@@ -497,6 +524,10 @@ $("bArrange").onclick = function () {
 $("title").addEventListener("input", function () { S.t = this.textContent.trim().slice(0, 80); save(); });
 $("title").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); this.blur(); } });
 $("bHidden").onclick = function () { showHidden = !showHidden; this.classList.toggle("on", showHidden); document.body.classList.toggle("show-hidden", showHidden); this.textContent = showHidden ? "Hide hidden" : "Show hidden"; render(); };
+$("filters").addEventListener("click", function (e) {
+  var btn = e.target.closest("button"); if (!btn) return;
+  chainFilter = btn.dataset.c || null; render(); scrollTo({ top: 0, behavior: "smooth" });
+});
 $("sWall").onchange = function () { S.w = this.value; render(); save(); };
 $("bAddr").onclick = function () { $("taAddr").value = S.a.join("\n"); $("dAddr").showModal(); };
 $("bAddrSave").onclick = function () { $("dAddr").close(); setAddrs($("taAddr").value); };
