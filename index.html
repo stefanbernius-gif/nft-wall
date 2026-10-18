@@ -32,6 +32,12 @@
   .tools button.on{background:var(--ink);color:var(--wall);border-color:var(--ink)}
   .tools select{appearance:none;padding-right:14px}
   .tools select option{color:#222}
+  .rooms{max-width:1400px;margin:18px auto 0;padding:0 24px;display:flex;gap:28px;border-bottom:1px solid var(--line)}
+  .rooms button{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:8px 0 10px;font-family:var(--serif);font-size:19px;color:var(--ink-soft)}
+  .rooms button:hover{color:var(--ink)}
+  .rooms button.on{color:var(--ink);border-bottom-color:var(--accent)}
+  .rooms button span{font-family:var(--sans);font-size:12px;opacity:.7;margin-left:4px}
+  body.room-fav #wall{gap:110px 90px}
   .filters{max-width:1400px;margin:14px auto 0;padding:0 24px;display:flex;flex-direction:column;gap:8px}
   .frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .frow .lbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);min-width:58px}
@@ -64,6 +70,9 @@
   .badge3d{position:absolute;left:10px;bottom:10px;background:rgba(30,27,24,.82);color:#f3e9d6;font:600 10px/1 var(--sans);letter-spacing:.14em;padding:5px 7px;border-radius:3px;pointer-events:none}
   .ctl{position:absolute;top:-14px;right:-14px;display:none;gap:6px;z-index:3}
   body.arrange .ctl{display:flex}
+  body:not(.arrange) .piece:hover .ctl{display:flex}
+  body:not(.arrange) .ctl .hide{display:none}
+  .ctl button.star:not(.on){opacity:.85}
   .ctl button{width:32px;height:32px;border-radius:50%;border:0;background:#fffdf8;color:#2b2824;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:15px;line-height:1}
   .ctl button.star.on{background:var(--accent);color:#fff}
   body.arrange .piece{cursor:grab;touch-action:none}
@@ -104,7 +113,7 @@
   .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:#2b2824;color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:translateX(-50%)}
   @media (max-width:640px){
-    header{padding:28px 16px 4px}.hint,.status,.filters{padding:0 16px}
+    header{padding:28px 16px 4px}.hint,.status,.filters,.rooms{padding:0 16px}
     #wall{padding:36px 16px 100px;gap:64px 28px}
     .art{width:150px;height:150px}.mat{padding:16px}.frame{padding:9px}
     .piece.fav .art{width:240px;height:240px}
@@ -129,6 +138,9 @@
     <button id="bShare">Copy share link</button>
   </div>
 </header>
+<nav class="rooms" id="rooms" aria-label="Gallery rooms" hidden>
+  <button data-v="all">Collection</button><button data-v="fav">★ Favorites <span id="favN">0</span></button>
+</nav>
 <nav class="filters" id="filters" aria-label="Filter by blockchain"></nav>
 <div class="hint" id="hint"></div>
 <div class="status" id="status"></div>
@@ -209,7 +221,7 @@ function applyProbable(it) {
 }
 
 /* ---------- state ---------- */
-var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [], k: [] };   // k = shown on purpose (overrides auto-hide)
+var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [], k: [], room: "all" };   // k = shown on purpose (overrides auto-hide)
 var NFT = {};          // key -> item
 var NOIMG = {};        // keys whose image failed everywhere (kept even when filtered off screen)
 var arrange = false, showHidden = false, chainFilter = null, walletFilter = null;
@@ -546,10 +558,11 @@ function computeAuto(keys) {
     DUPN[keep] = g.length;
   });
 }
-function autoHidden(k) { return (SCAMS[k] || DUPS[k]) && S.k.indexOf(k) < 0; }
+function autoHidden(k) { return (SCAMS[k] || DUPS[k]) && S.k.indexOf(k) < 0 && S.f.indexOf(k) < 0; }
 function isHidden(k) { return S.h.indexOf(k) >= 0 || autoHidden(k); }
 function inWallet(k) { return !walletFilter || (NFT[k] && NFT[k].holders.indexOf(walletFilter) >= 0); }
 function visible(k) { return showHidden || (!isHidden(k) && !NOIMG[k]); }
+function inRoom(k) { return S.room === "fav" ? S.f.indexOf(k) >= 0 : visible(k); }
 function wname(a) { var l = LABEL[a] || a; return /^0x[0-9a-f]{40}$/i.test(l) ? l.slice(0, 6) + "…" + l.slice(-4) : l; }
 function render() {
   document.body.dataset.wall = S.w; $("sWall").value = S.w;
@@ -557,7 +570,15 @@ function render() {
   $("tools").hidden = !S.a.length;
   if (!S.a.length) return renderEmpty();
   var keys = ordered(); computeAuto(keys);
-  var shown = keys.filter(function (k) { return (showHidden || !isHidden(k)) && (!chainFilter || k[0] === chainFilter) && inWallet(k); });
+  var fav = S.room === "fav";
+  var shown = keys.filter(function (k) {
+    if (fav) return S.f.indexOf(k) >= 0 && (!chainFilter || k[0] === chainFilter) && inWallet(k);
+    return (showHidden || !isHidden(k)) && (!chainFilter || k[0] === chainFilter) && inWallet(k);
+  });
+  document.body.classList.toggle("room-fav", fav);
+  $("rooms").hidden = false;
+  $("rooms").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.v === (fav ? "fav" : "all")); });
+  $("favN").textContent = S.f.filter(function (k) { return NFT[k]; }).length || S.f.length;
   $("hint").textContent = arrange ? "Drag a frame to move it. ★ makes it a featured piece. ⦸ hides it. Changes save into the share link." : "";
   var have = {};
   Array.prototype.forEach.call(wall.children, function (el) { if (el.dataset.key) have[el.dataset.key] = el; });
@@ -573,7 +594,8 @@ function render() {
   });
   Object.values(have).forEach(function (el) { el.remove(); });
   counts();
-  if (!shown.length && !$("status").textContent) wall.innerHTML = '<div class="empty"><h2>Nothing on the wall yet</h2><p>No NFTs found on these addresses, or all are hidden.</p></div>';
+  if (!shown.length && fav) wall.innerHTML = '<div class="empty"><h2>Your favorites gallery is empty</h2><p>Go to <b>Collection</b>, hover over a frame and click <b>★</b>. Starred pieces hang here, in gold frames.</p></div>';
+  else if (!shown.length && !$("status").textContent) wall.innerHTML = '<div class="empty"><h2>Nothing on the wall yet</h2><p>No NFTs found on these addresses, or all are hidden.</p></div>';
 }
 function counts() {
   var keys = ordered();
@@ -583,13 +605,14 @@ function counts() {
   var noimg = keys.filter(function (k) { return NOIMG[k] && !isHidden(k); }).length;
   var extra = [scam ? scam + " scam" : "", dup ? dup + " duplicates" : "", hidden ? hidden + " hidden" : "", noimg ? noimg + " without image" : ""].filter(Boolean).join(" · ");
   var shownN = keys.filter(function (k) { return !isHidden(k) && !NOIMG[k]; }).length;
-  $("sub").textContent = shownN + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
+  if (S.room === "fav") { var fn = S.f.filter(function (k) { return NFT[k]; }).length; $("sub").textContent = "Favorites · " + fn + (fn === 1 ? " piece" : " pieces"); }
+  else $("sub").textContent = shownN + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
   $("bHidden").hidden = !scam && !dup && !hidden && !noimg && !showHidden;
   renderFilters(keys);
 }
 function chainCounts(keys) {
   var n = {}; Object.keys(CHAINS).forEach(function (c) { n[c] = 0; });
-  keys.forEach(function (k) { if (visible(k) && inWallet(k)) n[k[0]]++; });
+  keys.forEach(function (k) { if (inRoom(k) && inWallet(k)) n[k[0]]++; });
   return n;
 }
 function chainSummary(keys) {
@@ -606,7 +629,7 @@ function renderFilters(keys) {
   if (wallets.length > 1) {
     var wn = {}; wallets.forEach(function (a) { wn[a] = 0; });
     var all = 0;
-    keys.forEach(function (k) { if (!visible(k) || (chainFilter && k[0] !== chainFilter)) return; all++; NFT[k].holders.forEach(function (a) { if (a in wn) wn[a]++; }); });
+    keys.forEach(function (k) { if (!inRoom(k) || (chainFilter && k[0] !== chainFilter)) return; all++; NFT[k].holders.forEach(function (a) { if (a in wn) wn[a]++; }); });
     html += '<div class="frow"><span class="lbl">Wallet</span><button data-w="" class="' + (walletFilter ? "" : "on") + '">ALL<span>' + all + '</span></button>' +
       wallets.map(function (a) { return '<button class="w' + (walletFilter === a ? " on" : "") + '" data-w="' + a + '" title="' + a + '">' + esc(wname(a)) + '<span>' + wn[a] + '</span></button>'; }).join("") + '</div>';
   }
@@ -640,6 +663,7 @@ function mount3d(box, it) {            // self-hosted Google model-viewer, loade
 }
 function toggle(arr, k) { var i = arr.indexOf(k); if (i >= 0) arr.splice(i, 1); else arr.push(k); }
 function renderEmpty() {
+  $("rooms").hidden = true;
   $("sub").textContent = "Ethereum · Arbitrum · Optimism · zkSync · Polygon · Base · Zora"; $("hint").textContent = ""; setStatus("");
   wall.innerHTML = '<div class="empty"><h2>Hang your NFTs on a wall</h2>' +
     '<p>Paste one or more public wallet addresses. The wall loads every NFT they hold on Ethereum, Arbitrum, Optimism, zkSync, Polygon, Base and Zora. No login, nothing to install.</p>' +
@@ -720,6 +744,10 @@ $("bArrange").onclick = function () {
 $("title").addEventListener("input", function () { S.t = this.textContent.trim().slice(0, 80); save(); });
 $("title").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); this.blur(); } });
 $("bHidden").onclick = function () { showHidden = !showHidden; this.classList.toggle("on", showHidden); document.body.classList.toggle("show-hidden", showHidden); this.textContent = showHidden ? "Hide hidden" : "Show hidden"; render(); };
+$("rooms").addEventListener("click", function (e) {
+  var b = e.target.closest("button"); if (!b) return;
+  S.room = b.dataset.v === "fav" ? "fav" : "all"; render(); save(); scrollTo({ top: 0, behavior: "smooth" });
+});
 $("filters").addEventListener("click", function (e) {
   var btn = e.target.closest("button"); if (!btn) return;
   if ("c" in btn.dataset) chainFilter = btn.dataset.c || null;
