@@ -202,13 +202,13 @@ async function fetchExtra(addr, c) {
     ids.forEach(function (i, k) {
       var o = owners[k]; if (!o || o.length < 42 || o.slice(-40).toLowerCase() !== lc.slice(2)) return;
       var key = c + ":" + x.ca + ":" + i;
-      if (NFT[key]) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
+      if (NFT[key] && !NFT[key].snap) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
       var saved = (x.saved || []).indexOf(i) >= 0;
-      NFT[key] = { id: String(i), key: key, chain: c, holders: [lc], value: "1", token_type: "ERC-721", chainTried: true,
+      adopt(key, { id: String(i), key: key, chain: c, holders: [lc], value: "1", token_type: "ERC-721", chainTried: true,
         note: saved ? x.note : "Image server gone (remx); no saved copy of this edition",
         model: saved ? "assets/av-3d-bunny-" + i + ".glb" : null,
         token: { address_hash: x.ca, name: x.name, type: "ERC-721" },
-        metadata: { name: x.name + " #" + i, image: saved ? "assets/av-3d-bunny-" + i + ".jpg" : null }, image_url: null };
+        metadata: { name: x.name + " #" + i, image: saved ? "assets/av-3d-bunny-" + i + ".jpg" : null }, image_url: null }, lc);
     });
   }
 }
@@ -224,6 +224,20 @@ function applyProbable(it) {
 var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [], k: [], room: "all" };   // k = shown on purpose (overrides auto-hide)
 var NFT = {};          // key -> item
 var NOIMG = {};        // keys whose image failed everywhere (kept even when filtered off screen)
+/* Snapshot (snapshot.json, made by tools/snapshot.py): favorites with their data and a small local picture.
+   They hang at once; the live load runs behind and confirms or replaces them. */
+var SNAP = {};
+function adopt(key, it, holder) {                 // put a live item in place; returns false if it was already live
+  var old = NFT[key];
+  if (old && !old.snap) { if (old.holders.indexOf(holder) < 0) old.holders.push(holder); return false; }
+  if (old && old.snap) {
+    it.thumb = old.thumb;
+    if (!it.metadata && old.metadata) { it.metadata = old.metadata; it.chainTried = true; }
+    if (!it.note && old.note) { it.note = old.note; it.noteLong = old.noteLong; }
+    if (!it.model && old.model) it.model = old.model;
+  }
+  NFT[key] = it; return true;
+}
 var arrange = false, showHidden = false, chainFilter = null, walletFilter = null;
 var LABEL = {};        // resolved address (lowercase) -> what the user typed (ENS name or address)   // filter is per viewer, not saved in the link
 var $ = function (id) { return document.getElementById(id); };
@@ -279,12 +293,14 @@ var VIDEO = /\.(mp4|webm|mov|m4v)(\?|$)/i;
 function mediaFor(it, big) {
   var md = it.metadata || {}, th = it.thumbnails || {};
   var imgs = [];
+  if (!big && it.thumb) imgs.push(it.thumb);          // wall: local copy first, it hangs at once
   if (!big && th["500x500"]) imgs.push(th["500x500"]);
   if (big && th.original) imgs.push(th.original);
   imgs = imgs.concat(candidates(it.image_url), candidates(md.image), candidates(md.image_url), candidates(md.image_data && ("data:image/svg+xml;utf8," + encodeURIComponent(md.image_data))));
   var vids = candidates(it.animation_url).concat(candidates(md.animation_url)).filter(function (u) { return VIDEO.test(u) || u.indexOf("data:video") === 0; });
   if (it.media_type === "video" && it.media_url) vids.unshift(it.media_url);
   imgs = imgs.filter(function (u) { return !VIDEO.test(u); });
+  if (big && it.thumb) imgs.push(it.thumb);           // detail: original first, local copy only as the last resort
   return { imgs: imgs.filter(function (x, i) { return imgs.indexOf(x) === i; }), vids: vids };
 }
 function mountMedia(box, it, big) {
@@ -410,9 +426,9 @@ async function fetchChain(addr, c, onPage) {
       if (!it.token) return;
       var key = c + ":" + String(it.token.address_hash || it.token.address).toLowerCase() + ":" + it.id;
       var a = addr.toLowerCase();
-      if (NFT[key]) { if (NFT[key].holders.indexOf(a) < 0) NFT[key].holders.push(a); return; }   // same NFT in two wallets (ERC-1155)
+      if (NFT[key] && !NFT[key].snap) { if (NFT[key].holders.indexOf(a) < 0) NFT[key].holders.push(a); return; }   // same NFT in two wallets (ERC-1155)
       it.chain = c; it.key = key; it.holders = [a]; applyProbable(it);
-      NFT[key] = it;
+      adopt(key, it, a);
     });
     onPage(); next = d.next_page_params; n++;
   } while (next && n < MAX_PAGES);
@@ -474,17 +490,23 @@ async function fetchByLogs(addr, c, onPage) {
   var uris = await rpcBatch(c, mine.map(function (x) { return ["eth_call", [{ to: x.ca, data: (x.std === "1155" ? "0x0e89341c" : "0xc87b56dd") + x.id }, "latest"]]; }));
   mine.forEach(function (x, i) {
     var id = BigInt("0x" + x.id).toString(), key = c + ":" + x.ca + ":" + id;
-    if (NFT[key]) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
+    if (NFT[key] && !NFT[key].snap) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
     var uri = abiString(uris[i]); if (uri) uri = uri.replace("{id}", x.id);
-    NFT[key] = { id: id, key: key, chain: c, holders: [lc], value: x.bal, token_type: x.std === "1155" ? "ERC-1155" : "ERC-721", tokenUri: uri,
+    adopt(key, { id: id, key: key, chain: c, holders: [lc], value: x.bal, token_type: x.std === "1155" ? "ERC-1155" : "ERC-721", tokenUri: uri,
       token: { address_hash: x.ca, name: abiString(names[cas.indexOf(x.ca)]) || "Unknown collection", type: x.std === "1155" ? "ERC-1155" : "ERC-721" },
-      metadata: null, image_url: null };
+      metadata: null, image_url: null }, lc);
   });
   onPage();
 }
 var loadRun = 0;
 async function loadAll() {
-  var run = ++loadRun; NFT = {}; NOIMG = {}; LABEL = {}; walletFilter = null; render();
+  var run = ++loadRun; NFT = {}; NOIMG = {}; LABEL = {}; walletFilter = null;
+  var mine = S.a.map(function (a) { return a.toLowerCase(); });
+  Object.keys(SNAP).forEach(function (k) {
+    var it = SNAP[k]; if (!it.holders.some(function (h) { return mine.indexOf(h) >= 0; })) return;
+    NFT[k] = JSON.parse(JSON.stringify(it)); NFT[k].snap = true; NFT[k].chainTried = true;
+  });
+  render();
   if (!S.a.length) return;
   var addrs = [];
   for (var i = 0; i < S.a.length; i++) {
@@ -499,6 +521,7 @@ async function loadAll() {
       .then(function () { done++; if (run === loadRun) setStatus(done < jobs.length ? "Loading… " + done + "/" + jobs.length : ""); });
   }));
   if (run !== loadRun) return;
+  if (!failed.length) Object.keys(NFT).forEach(function (k) { if (NFT[k].snap) delete NFT[k]; });   // no longer owned
   save(); render();
   setStatus(failed.length ? "Could not load: " + failed.join(", ") + ". Reload to retry." : "");
 }
@@ -768,8 +791,27 @@ $("bShare").onclick = async function () {
 var toastT;
 function toast(s) { var t = $("toast"); t.textContent = s; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("on"); }, 3200); }
 
+/* ---------- export for tools/snapshot.py (reads what the browser resolved) ---------- */
+window.__nftwallExport = function (keys) {
+  return keys.map(function (k) {
+    var it = NFT[k]; if (!it) return null;
+    var img = wall.querySelector('.piece[data-key="' + k + '"] .art img');
+    var md = it.metadata || {};
+    return { key: k, src: img && img.complete && img.naturalWidth ? img.currentSrc || img.src : null,
+      item: { id: it.id, key: k, chain: it.chain, holders: it.holders, value: it.value, token_type: it.token_type,
+        token: { address_hash: it.token.address_hash || it.token.address, name: it.token.name, symbol: it.token.symbol, type: it.token.type },
+        metadata: { name: md.name, description: (md.description || "").slice(0, 800), image: md.image || it.image_url || null },
+        note: it.note || null, noteLong: it.noteLong || null, model: it.model || null } };
+  }).filter(Boolean);
+};
+window.__nftwallFavs = function () { return S.f.slice(); };
+window.__nftwallBusy = function () { return $("status").textContent !== "" || metaBusy > 0 || metaQ.length > 0; };
+
 /* ---------- start ---------- */
-(async function () { await loadState(); fixState(); render(); loadAll(); })();
+async function loadSnap() {
+  try { var r = await fetch("snapshot.json", { cache: "no-cache" }); if (r.ok) SNAP = (await r.json()).items || {}; } catch (e) {}
+}
+(async function () { await Promise.all([loadState(), loadSnap()]); fixState(); render(); loadAll(); })();
 })();
 </script>
 </body>
