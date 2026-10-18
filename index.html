@@ -58,6 +58,8 @@
   .placard .t{font-family:var(--serif);font-size:15px;line-height:1.25;overflow-wrap:anywhere}
   .placard .c{font-family:var(--serif);font-style:italic;font-size:13px;color:#6f685e;margin-top:2px;overflow-wrap:anywhere}
   .placard .n{font-family:var(--serif);font-style:italic;font-size:11px;color:#9a7b4f;margin-top:4px}
+  .placard .autotag{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#b0413e;margin-top:4px}
+  .placard .autotag:empty{display:none}
   .placard .m{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#8b8478;margin-top:6px}
   .badge3d{position:absolute;left:10px;bottom:10px;background:rgba(30,27,24,.82);color:#f3e9d6;font:600 10px/1 var(--sans);letter-spacing:.14em;padding:5px 7px;border-radius:3px;pointer-events:none}
   .ctl{position:absolute;top:-14px;right:-14px;display:none;gap:6px;z-index:3}
@@ -207,7 +209,7 @@ function applyProbable(it) {
 }
 
 /* ---------- state ---------- */
-var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [] };
+var S = { v: 1, t: "My NFT Collection", w: "light", a: [], o: [], f: [], h: [], k: [] };   // k = shown on purpose (overrides auto-hide)
 var NFT = {};          // key -> item
 var NOIMG = {};        // keys whose image failed everywhere (kept even when filtered off screen)
 var arrange = false, showHidden = false, chainFilter = null, walletFilter = null;
@@ -237,6 +239,7 @@ function save() {
     try { history.replaceState(null, "", "#s=" + await pack(S)); } catch (e) {}
   }, 250);
 }
+function fixState() { ["a", "o", "f", "h", "k"].forEach(function (x) { if (!Array.isArray(S[x])) S[x] = []; }); }
 async function loadState() {
   var m = location.hash.match(/#s=([\w-]+)/);
   if (m) { try { Object.assign(S, await unpack(m[1])); return; } catch (e) { toast("This share link is damaged."); } }
@@ -299,7 +302,7 @@ function missing(box) {
     var go = function () {
       if (it.chainTried) return; it.chainTried = true;
       chainMeta(it).then(function (ok) {
-        if (ok) { refreshPlacard(it); mountMedia(box, it, !box.closest(".piece")); } else missing(box);
+        if (ok) { refreshPlacard(it); mountMedia(box, it, !box.closest(".piece")); laterRender(); } else missing(box);
       });
     };
     if (!box.closest(".piece")) go();          // detail view: right away
@@ -357,6 +360,7 @@ async function chainMetaNow(it) {
   } catch (e) { return false; }
 }
 function unb64(str) { var s = atob(str), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+var lrT; function laterRender() { clearTimeout(lrT); lrT = setTimeout(render, 1500); }
 function refreshPlacard(it) {
   var el = wall.querySelector('.piece[data-key="' + it.key + '"] .placard .t'); if (el) el.textContent = title(it);
 }
@@ -483,11 +487,6 @@ async function loadAll() {
       .then(function () { done++; if (run === loadRun) setStatus(done < jobs.length ? "Loading… " + done + "/" + jobs.length : ""); });
   }));
   if (run !== loadRun) return;
-  // tokens the explorer flags as scam/spam start hidden (only the first time they appear)
-  Object.values(NFT).forEach(function (it) {
-    var rep = it.token.reputation;
-    if (rep && rep !== "ok" && S.o.indexOf(it.key) < 0 && S.h.indexOf(it.key) < 0) S.h.push(it.key);
-  });
   save(); render();
   setStatus(failed.length ? "Could not load: " + failed.join(", ") + ". Reload to retry." : "");
 }
@@ -502,15 +501,63 @@ function ordered() {
 
 /* ---------- render ---------- */
 function setStatus(s) { $("status").textContent = s; }
+/* ---------- auto-hide: scams and duplicates (computed live, never stored, so rules can improve) ---------- */
+var SCAM_RE = new RegExp([
+  "https?://", "www\\.", "t\\.me/", "bit\\.ly", "discord\\.gg",
+  "[a-z0-9-]+\\.(com|net|org|io|xyz|me|site|top|info|us|pro|lol|app|cfd|biz|ac|pl|cc|vip|live|claims?|gift|club|online|tech|world|pw|ru)\\b",
+  "\\b(voucher|claim|redeem|raffle|bonus|you('?ve| have) won|visit)\\b",
+  "\\$\\s?[0-9][0-9,.]*", "\\b[0-9][0-9,.]*\\s?(k|m)?\\s?(usdt|usdc|busd|eth|steth|bnb|shib|uni|comp|wst|bone|pepe|arb|op|matic)\\b",
+  "🎁", "gas[ -]?fee refund", "rewards?\\s+(at|:)"].join("|"), "i");
+var BRAND_RE = /\b(aave|lido|shib(a|ani)?|uniswap|tether|eigenlayer|pudgy penguin|blur|binance|metamask|ether)\b.*(\bnft\b|\btoken\b|reward|#\s?\d+|\b\d{3,}\b)|^(eigenlayer|shibani)$/i;
+var GOOD_RE = /galxe oat|optimism quest|rabbithole|mint\.fun|layer3|zora|holograph/i;   // known real badge/quest collections
+function isScam(it) {
+  if (!it || !it.token) return false;
+  var md = it.metadata || {}, txt = [it.token.name, it.token.symbol, md.name].join(" ");
+  var good = GOOD_RE.test(it.token.name || "");
+  if (good && !/https?:\/\/|t\.me\/|\$\s?\d/i.test(txt)) return false;
+  if (SCAM_RE.test(txt)) return true;
+  if (/\b(airdrop|giveaway)\b/i.test(txt) && it.chain !== "e") return true;     // "airdrop" NFTs on side chains are bait
+  if (BRAND_RE.test(txt) && it.chain !== "e") return true;            // big-brand names on the wrong chain are fakes
+  var rep = it.token.reputation; if (rep && rep !== "ok") return true;  // explorer's own scam flag
+  if (/claim|airdrop|reward/i.test(md.description || "") && /https?:\/\/|\.[a-z]{2,4}\b/i.test(md.description || "")) return true;
+  return false;
+}
+function fingerprint(it) {             // same artwork = same image (IPFS path, URL or inline data)
+  var md = it.metadata || {}, u = md.image || it.image_url || md.image_url || md.animation_url || it.animation_url || "";
+  if (!u || String(u).indexOf("assets/") === 0) return null;
+  u = String(u); var p = ipfsPath(u); if (p) return "ipfs:" + p.replace(/\/$/, "");
+  if (u.indexOf("data:") === 0) return "data:" + u.length + ":" + u.slice(-80);
+  return u.split("?")[0].replace(/^https?:\/\//, "");
+}
+var SCAMS = {}, DUPS = {}, DUPN = {};
+function computeAuto(keys) {
+  SCAMS = {}; DUPS = {}; DUPN = {};
+  var groups = {};
+  keys.forEach(function (k) {
+    var it = NFT[k]; if (!it) return;
+    if (isScam(it)) { SCAMS[k] = 1; return; }
+    var fp = fingerprint(it); if (!fp) return;
+    (groups[fp] = groups[fp] || []).push(k);
+  });
+  Object.keys(groups).forEach(function (fp) {
+    var g = groups[fp]; if (g.length < 2) return;
+    var keep = g.filter(function (k) { return S.f.indexOf(k) >= 0; })[0] || g.filter(function (k) { return S.h.indexOf(k) < 0; })[0] || g[0];
+    g.forEach(function (k) { if (k !== keep && S.k.indexOf(k) < 0) DUPS[k] = 1; });
+    DUPN[keep] = g.length;
+  });
+}
+function autoHidden(k) { return (SCAMS[k] || DUPS[k]) && S.k.indexOf(k) < 0; }
+function isHidden(k) { return S.h.indexOf(k) >= 0 || autoHidden(k); }
 function inWallet(k) { return !walletFilter || (NFT[k] && NFT[k].holders.indexOf(walletFilter) >= 0); }
-function visible(k) { return showHidden || (S.h.indexOf(k) < 0 && !NOIMG[k]); }
+function visible(k) { return showHidden || (!isHidden(k) && !NOIMG[k]); }
 function wname(a) { var l = LABEL[a] || a; return /^0x[0-9a-f]{40}$/i.test(l) ? l.slice(0, 6) + "…" + l.slice(-4) : l; }
 function render() {
   document.body.dataset.wall = S.w; $("sWall").value = S.w;
   $("title").textContent = S.t || "My NFT Collection"; document.title = (S.t || "NFT Wall");
   $("tools").hidden = !S.a.length;
   if (!S.a.length) return renderEmpty();
-  var keys = ordered(), shown = keys.filter(function (k) { return (showHidden || S.h.indexOf(k) < 0) && (!chainFilter || k[0] === chainFilter) && inWallet(k); });
+  var keys = ordered(); computeAuto(keys);
+  var shown = keys.filter(function (k) { return (showHidden || !isHidden(k)) && (!chainFilter || k[0] === chainFilter) && inWallet(k); });
   $("hint").textContent = arrange ? "Drag a frame to move it. ★ makes it a featured piece. ⦸ hides it. Changes save into the share link." : "";
   var have = {};
   Array.prototype.forEach.call(wall.children, function (el) { if (el.dataset.key) have[el.dataset.key] = el; });
@@ -518,7 +565,9 @@ function render() {
   shown.forEach(function (k, i) {
     var el = have[k] || piece(NFT[k]); delete have[k];
     el.classList.toggle("fav", S.f.indexOf(k) >= 0);
-    el.classList.toggle("hidden-piece", S.h.indexOf(k) >= 0);
+    el.classList.toggle("hidden-piece", isHidden(k));
+    var dn = el.querySelector(".dupn"); if (dn) dn.textContent = DUPN[k] > 1 && !showHidden ? " · ×" + DUPN[k] + " copies" : "";
+    var tag = el.querySelector(".autotag"); if (tag) tag.textContent = showHidden ? (SCAMS[k] && S.k.indexOf(k) < 0 ? "Likely scam" : DUPS[k] ? "Duplicate" : "") : "";
     el.querySelector(".star").classList.toggle("on", S.f.indexOf(k) >= 0);
     if (wall.children[i] !== el) wall.insertBefore(el, wall.children[i] || null);
   });
@@ -527,11 +576,15 @@ function render() {
   if (!shown.length && !$("status").textContent) wall.innerHTML = '<div class="empty"><h2>Nothing on the wall yet</h2><p>No NFTs found on these addresses, or all are hidden.</p></div>';
 }
 function counts() {
-  var keys = ordered(), hidden = keys.filter(function (k) { return S.h.indexOf(k) >= 0; }).length;
-  var noimg = keys.filter(function (k) { return NOIMG[k] && S.h.indexOf(k) < 0; }).length;
-  var extra = [hidden ? hidden + " hidden" : "", noimg ? noimg + " without image" : ""].filter(Boolean).join(" · ");
-  $("sub").textContent = (keys.length - hidden - noimg) + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
-  $("bHidden").hidden = !hidden && !noimg && !showHidden;
+  var keys = ordered();
+  var scam = keys.filter(function (k) { return SCAMS[k] && S.k.indexOf(k) < 0 && S.h.indexOf(k) < 0; }).length;
+  var dup = keys.filter(function (k) { return DUPS[k] && !SCAMS[k] && S.h.indexOf(k) < 0; }).length;
+  var hidden = keys.filter(function (k) { return S.h.indexOf(k) >= 0; }).length;
+  var noimg = keys.filter(function (k) { return NOIMG[k] && !isHidden(k); }).length;
+  var extra = [scam ? scam + " scam" : "", dup ? dup + " duplicates" : "", hidden ? hidden + " hidden" : "", noimg ? noimg + " without image" : ""].filter(Boolean).join(" · ");
+  var shownN = keys.filter(function (k) { return !isHidden(k) && !NOIMG[k]; }).length;
+  $("sub").textContent = shownN + " pieces · " + chainSummary(keys) + (extra ? " · " + extra : "");
+  $("bHidden").hidden = !scam && !dup && !hidden && !noimg && !showHidden;
   renderFilters(keys);
 }
 function chainCounts(keys) {
@@ -565,11 +618,16 @@ function piece(it) {
     '<div class="frame"><div class="mat"><div class="art"></div></div></div>' +
     '<figcaption class="placard"><div class="t">' + esc(title(it)) + '</div><div class="c">' + esc(it.token.name || "Unknown collection") + '</div>' +
     (it.note ? '<div class="n">' + esc(it.note) + '</div>' : "") +
-    '<div class="m">' + CHAINS[it.chain].name + (it.value && it.value !== "1" ? " · ×" + esc(it.value) : "") + '</div></figcaption>';
+    '<div class="m">' + CHAINS[it.chain].name + (it.value && it.value !== "1" ? " · ×" + esc(it.value) : "") + '<span class="dupn"></span></div><div class="autotag"></div></figcaption>';
   mountMedia(el.querySelector(".art"), it, false);
   if (it.model) el.querySelector(".mat").insertAdjacentHTML("beforeend", '<span class="badge3d">3D</span>');
   el.querySelector(".star").onclick = function (e) { e.stopPropagation(); toggle(S.f, it.key); render(); save(); };
-  el.querySelector(".hide").onclick = function (e) { e.stopPropagation(); toggle(S.h, it.key); render(); save(); };
+  el.querySelector(".hide").onclick = function (e) {
+    e.stopPropagation(); var k = it.key;
+    if (isHidden(k)) { S.h = S.h.filter(function (x) { return x !== k; }); if (autoHidden(k) && S.k.indexOf(k) < 0) S.k.push(k); }
+    else { S.k = S.k.filter(function (x) { return x !== k; }); if (!autoHidden(k)) S.h.push(k); }
+    render(); save();
+  };
   el.querySelector(".frame").addEventListener("click", function () { if (!arrange && !dragMoved) openLb(it); });
   return el;
 }
@@ -683,7 +741,7 @@ var toastT;
 function toast(s) { var t = $("toast"); t.textContent = s; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove("on"); }, 3200); }
 
 /* ---------- start ---------- */
-(async function () { await loadState(); render(); loadAll(); })();
+(async function () { await loadState(); fixState(); render(); loadAll(); })();
 })();
 </script>
 </body>
