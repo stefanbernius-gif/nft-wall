@@ -48,7 +48,7 @@
   .piece::before{content:"";position:absolute;left:50%;top:-70px;width:150%;height:160px;transform:translateX(-50%);
     background:radial-gradient(50% 60% at 50% 0%,rgba(255,244,220,.28),transparent 70%);pointer-events:none}
   .frame{position:relative;background:var(--frame);padding:12px;box-shadow:0 2px 0 rgba(255,255,255,.08) inset,0 18px 30px -12px rgba(0,0,0,.55),0 4px 8px rgba(0,0,0,.25);cursor:zoom-in}
-  .mat{background:var(--mat);padding:28px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),inset 0 3px 8px rgba(0,0,0,.12)}
+  .mat{position:relative;background:var(--mat);padding:28px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),inset 0 3px 8px rgba(0,0,0,.12)}
   .art{width:220px;height:220px;display:flex;align-items:center;justify-content:center;background:#f1efe9;overflow:hidden}
   .art img,.art video{-webkit-user-drag:none;max-width:100%;max-height:100%;display:block;object-fit:contain}
   .art .ph{font-family:var(--serif);font-size:13px;color:#8b8478;text-align:center;padding:16px;font-style:italic}
@@ -59,6 +59,7 @@
   .placard .c{font-family:var(--serif);font-style:italic;font-size:13px;color:#6f685e;margin-top:2px;overflow-wrap:anywhere}
   .placard .n{font-family:var(--serif);font-style:italic;font-size:11px;color:#9a7b4f;margin-top:4px}
   .placard .m{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#8b8478;margin-top:6px}
+  .badge3d{position:absolute;left:10px;bottom:10px;background:rgba(30,27,24,.82);color:#f3e9d6;font:600 10px/1 var(--sans);letter-spacing:.14em;padding:5px 7px;border-radius:3px;pointer-events:none}
   .ctl{position:absolute;top:-14px;right:-14px;display:none;gap:6px;z-index:3}
   body.arrange .ctl{display:flex}
   .ctl button{width:32px;height:32px;border-radius:50%;border:0;background:#fffdf8;color:#2b2824;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:15px;line-height:1}
@@ -173,7 +174,8 @@ var PROBABLE = {
    Image = OpenSea's cached copy, stored in this repo so it cannot disappear again. */
 var EXTRA = {
   p: [{ ca: "0xda3604ca0b94b8e8aba20b0043dea2ff31e03212", max: 1100, name: "Amber Vittoria 3D bunny collectable",
-        image: "assets/av-3d-bunny.jpg", note: "Image saved from OpenSea's copy (remx, the original host, is gone)" }]
+        saved: [42, 362, 476],      // 3D models (.glb) saved from OpenSea's cache; stills rendered from them
+        note: "3D model saved from OpenSea's copy (remx, the original host, is gone). Click to turn it." }]
 };
 async function fetchExtra(addr, c) {
   var list = EXTRA[c] || [], lc = addr.toLowerCase();
@@ -187,8 +189,12 @@ async function fetchExtra(addr, c) {
       var o = owners[k]; if (!o || o.length < 42 || o.slice(-40).toLowerCase() !== lc.slice(2)) return;
       var key = c + ":" + x.ca + ":" + i;
       if (NFT[key]) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
-      NFT[key] = { id: String(i), key: key, chain: c, holders: [lc], value: "1", token_type: "ERC-721", note: x.note, chainTried: true,
-        token: { address_hash: x.ca, name: x.name, type: "ERC-721" }, metadata: { name: x.name + " #" + i, image: x.image }, image_url: null };
+      var saved = (x.saved || []).indexOf(i) >= 0;
+      NFT[key] = { id: String(i), key: key, chain: c, holders: [lc], value: "1", token_type: "ERC-721", chainTried: true,
+        note: saved ? x.note : "Image server gone (remx); no saved copy of this edition",
+        model: saved ? "assets/av-3d-bunny-" + i + ".glb" : null,
+        token: { address_hash: x.ca, name: x.name, type: "ERC-721" },
+        metadata: { name: x.name + " #" + i, image: saved ? "assets/av-3d-bunny-" + i + ".jpg" : null }, image_url: null };
     });
   }
 }
@@ -197,6 +203,7 @@ function applyProbable(it) {
   var md = it.metadata || {};
   if (!f || it.image_url || md.image) return;
   var p = f(it.id); it.metadata = Object.assign({}, md, { name: md.name || p.name, image: p.image }); it.note = p.note; it.chainTried = true;
+  it.noteLong = p.note + ". The original image server (nouns.space) no longer exists.";
 }
 
 /* ---------- state ---------- */
@@ -560,10 +567,18 @@ function piece(it) {
     (it.note ? '<div class="n">' + esc(it.note) + '</div>' : "") +
     '<div class="m">' + CHAINS[it.chain].name + (it.value && it.value !== "1" ? " · ×" + esc(it.value) : "") + '</div></figcaption>';
   mountMedia(el.querySelector(".art"), it, false);
+  if (it.model) el.querySelector(".mat").insertAdjacentHTML("beforeend", '<span class="badge3d">3D</span>');
   el.querySelector(".star").onclick = function (e) { e.stopPropagation(); toggle(S.f, it.key); render(); save(); };
   el.querySelector(".hide").onclick = function (e) { e.stopPropagation(); toggle(S.h, it.key); render(); save(); };
   el.querySelector(".frame").addEventListener("click", function () { if (!arrange && !dragMoved) openLb(it); });
   return el;
+}
+var mvLoaded = false;
+function mount3d(box, it) {            // self-hosted Google model-viewer, loaded only when a 3D piece is opened
+  if (!mvLoaded) { var sc = document.createElement("script"); sc.type = "module"; sc.src = "assets/model-viewer.min.js"; document.head.appendChild(sc); mvLoaded = true; }
+  box.innerHTML = '<model-viewer src="' + esc(it.model) + '" poster="' + esc(it.metadata.image || "") + '" camera-controls auto-rotate auto-rotate-delay="1500" rotation-per-second="18deg" ' +
+    'camera-orbit="90deg 80deg auto" shadow-intensity="1" exposure="1.05" environment-image="neutral" interaction-prompt="auto" ' +
+    'style="width:min(640px,86vw);height:min(640px,70vh);background:#f1efe9" alt="' + esc(title(it)) + '"></model-viewer>';
 }
 function toggle(arr, k) { var i = arr.indexOf(k); if (i >= 0) arr.splice(i, 1); else arr.push(k); }
 function renderEmpty() {
@@ -586,12 +601,12 @@ function setAddrs(text) {
 function openLb(it) {
   var md = it.metadata || {}, c = CHAINS[it.chain], ca = it.token.address_hash || it.token.address;
   $("lb").innerHTML = '<div class="big"></div><div class="info"><h3>' + esc(title(it)) + '</h3><div class="c">' + esc(it.token.name || "") + '</div>' +
-    (it.note ? '<div class="d" style="color:#e8cf9f;font-style:italic">' + esc(it.note) + '. The original image server (nouns.space) no longer exists.</div>' : "") +
+    (it.note ? '<div class="d" style="color:#e8cf9f;font-style:italic">' + esc(it.noteLong || it.note) + '</div>' : "") +
     (md.description ? '<div class="d">' + esc(md.description) + '</div>' : "") +
     '<dl><dt>Chain</dt><dd>' + c.name + '</dd><dt>Token ID</dt><dd>' + esc(it.id) + '</dd><dt>Standard</dt><dd>' + esc(it.token_type || it.token.type) + '</dd>' +
     '<dt>Contract</dt><dd>' + esc(ca) + '</dd><dt>Wallet</dt><dd>' + it.holders.map(function (a) { return esc(wname(a)); }).join(", ") + '</dd></dl>' +
     '<a href="' + c.explorer + '/token/' + ca + '/instance/' + encodeURIComponent(it.id) + '" target="_blank" rel="noopener">View on ' + c.name + ' explorer ↗</a></div>';
-  mountMedia($("lb").querySelector(".big"), it, true);
+  if (it.model) mount3d($("lb").querySelector(".big"), it); else mountMedia($("lb").querySelector(".big"), it, true);
   $("dLb").showModal();
 }
 document.querySelectorAll("dialog").forEach(function (d) {
