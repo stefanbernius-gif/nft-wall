@@ -581,7 +581,7 @@ function computeAuto(keys) {
     DUPN[keep] = g.length;
   });
 }
-function autoHidden(k) { return (SCAMS[k] || DUPS[k]) && S.k.indexOf(k) < 0 && S.f.indexOf(k) < 0; }
+function autoHidden(k) { return !!(SCAMS[k] || DUPS[k]) && S.k.indexOf(k) < 0 && S.f.indexOf(k) < 0; }
 function isHidden(k) { return S.h.indexOf(k) >= 0 || autoHidden(k); }
 function inWallet(k) { return !walletFilter || (NFT[k] && NFT[k].holders.indexOf(walletFilter) >= 0); }
 function visible(k) { return showHidden || (!isHidden(k) && !NOIMG[k]); }
@@ -609,7 +609,7 @@ function render() {
   shown.forEach(function (k, i) {
     var el = have[k] || piece(NFT[k]); delete have[k];
     el.classList.toggle("fav", S.f.indexOf(k) >= 0);
-    el.classList.toggle("hidden-piece", isHidden(k));
+    el.classList.toggle("hidden-piece", !!isHidden(k));
     var dn = el.querySelector(".dupn"); if (dn) dn.textContent = DUPN[k] > 1 && !showHidden ? " · ×" + DUPN[k] + " copies" : "";
     var tag = el.querySelector(".autotag"); if (tag) tag.textContent = showHidden ? (SCAMS[k] && S.k.indexOf(k) < 0 ? "Likely scam" : DUPS[k] ? "Duplicate" : "") : "";
     el.querySelector(".star").classList.toggle("on", S.f.indexOf(k) >= 0);
