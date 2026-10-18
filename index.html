@@ -168,6 +168,30 @@ var PROBABLE = {
                                       : "Probable image (from OptiNoun #" + id + ", unconfirmed)" };
   }
 };
+/* Contracts the explorers never indexed. Checked straight on-chain for every wallet (balanceOf, then ownerOf scan).
+   Amber Vittoria 3D bunny collectable (remx, June 2023): remx's metadata bucket is gone (403); 27 of 1,000 were minted.
+   Image = OpenSea's cached copy, stored in this repo so it cannot disappear again. */
+var EXTRA = {
+  p: [{ ca: "0xda3604ca0b94b8e8aba20b0043dea2ff31e03212", max: 1100, name: "Amber Vittoria 3D bunny collectable",
+        image: "assets/av-3d-bunny.jpg", note: "Image saved from OpenSea's copy (remx, the original host, is gone)" }]
+};
+async function fetchExtra(addr, c) {
+  var list = EXTRA[c] || [], lc = addr.toLowerCase();
+  for (var n = 0; n < list.length; n++) {
+    var x = list[n];
+    var bal = (await rpcBatch(c, [["eth_call", [{ to: x.ca, data: "0x70a08231" + p64(addr) }, "latest"]]]))[0];
+    if (!bal || bal === "0x" || BigInt(bal) === 0n) continue;
+    var ids = []; for (var i = 0; i <= x.max; i++) ids.push(i);
+    var owners = await rpcBatch(c, ids.map(function (i) { return ["eth_call", [{ to: x.ca, data: "0x6352211e" + p64(i.toString(16)) }, "latest"]]; }));
+    ids.forEach(function (i, k) {
+      var o = owners[k]; if (!o || o.length < 42 || o.slice(-40).toLowerCase() !== lc.slice(2)) return;
+      var key = c + ":" + x.ca + ":" + i;
+      if (NFT[key]) { if (NFT[key].holders.indexOf(lc) < 0) NFT[key].holders.push(lc); return; }
+      NFT[key] = { id: String(i), key: key, chain: c, holders: [lc], value: "1", token_type: "ERC-721", note: x.note, chainTried: true,
+        token: { address_hash: x.ca, name: x.name, type: "ERC-721" }, metadata: { name: x.name + " #" + i, image: x.image }, image_url: null };
+    });
+  }
+}
 function applyProbable(it) {
   var f = PROBABLE[it.chain + ":" + String(it.token.address_hash || it.token.address).toLowerCase()];
   var md = it.metadata || {};
@@ -221,7 +245,7 @@ function ipfsPath(u) {
 function candidates(u) {
   if (!u || typeof u !== "string") return [];
   u = u.trim();
-  if (u.indexOf("data:") === 0) return [u];
+  if (u.indexOf("data:") === 0 || u.indexOf("assets/") === 0) return [u];
   if (u.indexOf("ar://") === 0) return ["https://arweave.net/" + u.slice(5)];
   var p = ipfsPath(u), out = [];
   if (p) GATEWAYS.forEach(function (g) { out.push(g + p); });          // IPFS: our gateway order first, the original host last
@@ -369,6 +393,7 @@ async function fetchChain(addr, c, onPage) {
     });
     onPage(); next = d.next_page_params; n++;
   } while (next && n < MAX_PAGES);
+  await fetchExtra(addr, c).catch(function () {}); onPage();
 }
 /* ---------- chains without an explorer API: read NFTs from transfer logs ---------- */
 var T1155S = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62", T1155B = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb",
